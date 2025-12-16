@@ -95,7 +95,7 @@ Iy_all = (Cluster[::2] - min_NN).astype(int)  # Even indices (columns 0, 2, 4...
 Iz_all = (Cluster[1::2] - min_MM).astype(int)  # Odd indices (columns 1, 3, 5...)
 
 # Reshape to separate cluster elements and sub-arrays
-Ntrans = Cluster.shape[1] // 2
+Ntrans = Cluster.shape[1]
 Lsub_elements = B.shape[0]
 Iy_all = Iy_all.reshape(Lsub_elements, Ntrans)
 Iz_all = Iz_all.reshape(Lsub_elements, Ntrans)
