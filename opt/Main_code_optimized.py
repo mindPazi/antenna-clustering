@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 from ElementPattern_optimized import ElementPattern
 from GenerateLattice_optimized import GenerateLattice
 from SubArraySet_Generation_optimized import SubArraySet_Generation
+import time
 
 # ANTENNA ARRAY REGULAR CLUSTERING
 # Version: 1.0;
@@ -11,12 +12,12 @@ from SubArraySet_Generation_optimized import SubArraySet_Generation
 
 # __________________________________________________________________________
 ### INPUT:
-
+start = time.time()
 # ANTENNA ARRAY PARAMETERS
 f = 29e9  # Frequency [GHz]
 
-Nz = 8  # Number of rows
-Ny = 8  # Number of columns
+Nz = 16  # Number of rows
+Ny = 16  # Number of columns
 
 dist_z = 0.7  # antenna distance on z axis [times lambda]
 dist_y = 0.5  # antenna distance on y axis [times lambda]
@@ -204,4 +205,6 @@ plt.ylabel("Normalized RPE R(θ,φ)")
 plt.legend()
 plt.title("Horizontal plane")
 
+end = time.time()
+print(f"Tempo di esecuzione: {end - start:.6f} secondi")
 plt.show()
