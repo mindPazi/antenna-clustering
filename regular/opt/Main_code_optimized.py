@@ -16,8 +16,8 @@ start = time.time()
 # ANTENNA ARRAY PARAMETERS
 f = 29e9  # Frequency [GHz]
 
-Nz = 16  # Number of rows
-Ny = 16  # Number of columns
+Nz = 8  # Number of rows
+Ny = 8  # Number of columns
 
 dist_z = 0.7  # antenna distance on z axis [times lambda]
 dist_y = 0.5  # antenna distance on y axis [times lambda]
@@ -33,7 +33,7 @@ load_file = 0  # Set load_file =1 to load antenna element RPE from HFSS,
 file_name = "RPE_element.csv"  # name of the file with antenna element RPE from HFSS
 
 ### SELECT CLUSTER TYPE: deselect the one you need
-# B = np.array([[0, 0]])  # single element cluster / NO clastering solution
+# B = np.array([[0, 0]])  # single element cluster / NO clustering solution
 ### cluster size: 2 antenna elements
 B = np.array([[0, 0], [0, 1]])  # vertical linear cluster
 # B = np.array([[0, 0], [1, 0]])  # horizontal linear cluster
