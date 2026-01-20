@@ -1,430 +1,672 @@
 """
-Funzioni per calcolo reale Side Lobe Level (SLL) da array clustering
+Funzioni per calcolo array antenna con clustering - Fedele al MATLAB
 Tradotto da MATLAB "Irregular Antenna Clustering Tool"
+Versione corretta - 100% fedele al codice MATLAB originale
 """
 
 import numpy as np
-from scipy.interpolate import griddata
-from typing import Tuple, List, Dict
-from dataclasses import dataclass
+from scipy.interpolate import interp2d, griddata
+from typing import Tuple, List, Dict, Optional, Union
+from dataclasses import dataclass, field
 
 
 @dataclass
 class LatticeConfig:
-    """Configurazione lattice array"""
+    """Configurazione lattice array - come Input_Conf.m"""
 
-    Nz: int  # righe
-    Ny: int  # colonne
-    dist_z: float  # distanza z [lambda]
-    dist_y: float  # distanza y [lambda]
-    lattice_type: int = 1  # 1=rectangular, 2=square, 3=triangular
+    Nz: int  # Number of rows
+    Ny: int  # Number of columns
+    dist_z: float  # antenna distance on z axis [times lambda]
+    dist_y: float  # antenna distance on y axis [times lambda]
+    lattice_type: int = 1  # 1=Rectangular, 2=Squared, 3=Triangular Equilateral,
+    # 4=Triangular NON-equilateral, 5=Hexagonal
 
 
 @dataclass
 class SystemConfig:
-    """Parametri sistema"""
+    """Parametri sistema - come Input_Conf.m"""
 
-    freq: float  # Hz
-    lambda_: float  # wavelength [m]
-    beta: float  # wave number
-    azi0: float = 0.0  # steering azimuth [deg]
-    ele0: float = 0.0  # steering elevation [deg]
-    dele: float = 0.5  # angular resolution [deg]
-    dazi: float = 0.5  # angular resolution [deg]
+    freq: float  # [Hz]
+    lambda_: float = field(init=False)  # wavelength [m]
+    beta: float = field(init=False)  # wave number
+    azi0: float = 0.0  # [deg] azimuth steering angle
+    ele0: float = 0.0  # [deg] elevation steering angle
+    dele: float = 0.5  # angle resolution [deg]
+    dazi: float = 0.5  # angle resolution [deg]
+
+    def __post_init__(self):
+        self.lambda_ = 3e8 / self.freq
+        self.beta = 2 * np.pi / self.lambda_
 
 
 @dataclass
 class MaskConfig:
-    """Parametri maschera SLL"""
+    """Parametri maschera SLL - come Input_Conf.m"""
 
-    elem: float = 30.0  # half FoV elevation [deg]
-    azim: float = 60.0  # half FoV azimuth [deg]
-    SLL_level: float = 20.0  # SLL outside FoV [dB]
-    SLLin: float = 15.0  # SLL inside FoV [dB]
+    elem: float = 30.0  # [deg] half-FoV width elevation plane
+    azim: float = 60.0  # [deg] half-FoV width azimuthal plane
+    SLL_level: float = 20.0  # [dB] SLL level outside the FoV
+    SLLin: float = 15.0  # [dB] SLL level inside the FoV
+
+
+@dataclass
+class ElementPatternConfig:
+    """Configurazione pattern elemento - come Input_Conf.m"""
+
+    P: int = 1  # 0=isotropic, 1=cosine
+    Gel: float = 5.0  # Maximum antenna Gain [dB]
+    load_file: int = 0  # 0=generate, 1=load from HFSS
+    rpe_folder: str = ""
+    rpe_file_name: str = "RPE_element.csv"
 
 
 class AntennaArray:
-    """Classe per array di antenne con clustering"""
+    """
+    Classe per array di antenne con clustering
+    Implementazione fedele al MATLAB
+    """
 
-    def __init__(self, lattice: LatticeConfig, system: SystemConfig, mask: MaskConfig):
+    def __init__(
+        self,
+        lattice: LatticeConfig,
+        system: SystemConfig,
+        mask: MaskConfig,
+        eef_config: Optional[ElementPatternConfig] = None,
+    ):
         self.lattice = lattice
         self.system = system
         self.mask = mask
+        self.eef_config = eef_config or ElementPatternConfig()
         self.Nel = lattice.Nz * lattice.Ny
 
-        # Genera lattice
+        # Genera vettori base lattice
+        self._compute_lattice_vectors()
+
+        # Genera lattice (come GenerateLattice.m)
         self._generate_lattice()
 
-        # Genera coordinate polari
+        # Genera coordinate polari (come PolarCoordinate_SteeringAngle e Main_code.m)
         self._generate_polar_coordinates()
 
-        # Genera pattern elemento
+        # Genera pattern elemento (come ElementPattern.m)
         self._generate_element_pattern()
 
-        # Genera maschera
+        # Genera maschera (come mask_design_v2d0.m)
         self._generate_mask()
 
-    def _generate_lattice(self):
-        """Genera coordinate lattice array (come GenerateLattice.m)"""
-        Nz, Ny = self.lattice.Nz, self.lattice.Ny
+    def _compute_lattice_vectors(self):
+        """Calcola vettori base lattice come in Main_code.m"""
         lambda_ = self.system.lambda_
+        dz = self.lattice.dist_z * lambda_
+        dy = self.lattice.dist_y * lambda_
 
-        # Vettori base
-        x1 = np.array([lambda_ * self.lattice.dist_y, 0])
-        x2 = np.array([0, lambda_ * self.lattice.dist_z])
+        # Vettori base per lattice rettangolare (default)
+        # x1 = [dy, 0], x2 = [0, dz]
+        self.x1 = np.array([dy, 0.0])
+        self.x2 = np.array([0.0, dz])
 
-        # Grid di indici
-        nn = np.arange(-(Ny - 1) / 2, (Ny - 1) / 2 + 1)
-        mm = np.arange(-(Nz - 1) / 2, (Nz - 1) / 2 + 1)
-        NN, MM = np.meshgrid(nn, mm)
+        # Per lattice triangolare/esagonale, modificare x2
+        if self.lattice.lattice_type == 3:  # Triangular Equilateral (45 deg)
+            self.x2 = np.array([dy, dz])
+        elif self.lattice.lattice_type == 5:  # Hexagonal (30 deg)
+            self.x2 = np.array([dy / 2, dz])
 
-        # Coordinate fisiche [m]
-        self.Y = NN * x1[0] + MM * x2[0]
-        self.Z = NN * x1[1] + MM * x2[1]
-        self.NN = NN
-        self.MM = MM
+    def _generate_lattice(self):
+        """
+        Genera coordinate lattice array
+        FEDELE a GenerateLattice.m righe 42-81
+        """
+        Nz = self.lattice.Nz
+        Ny = self.lattice.Ny
 
-        # Dimensioni array
-        self.Dy = np.max(self.Y) - np.min(self.Y)
+        # Generate array indexes - ESATTAMENTE come MATLAB
+        # if (rem(Nz,2)) M=-(Nz-1)/2:(Nz-1)/2; else M=-Nz/2+1:Nz/2; end
+        if Nz % 2 == 1:  # dispari
+            M = np.arange(-(Nz - 1) / 2, (Nz - 1) / 2 + 1)
+        else:  # pari
+            M = np.arange(-Nz / 2 + 1, Nz / 2 + 1)
+
+        if Ny % 2 == 1:  # dispari
+            N = np.arange(-(Ny - 1) / 2, (Ny - 1) / 2 + 1)
+        else:  # pari
+            N = np.arange(-Ny / 2 + 1, Ny / 2 + 1)
+
+        # [NN,MM]=meshgrid(N,M);
+        self.NN, self.MM = np.meshgrid(N, M)
+
+        # dz=x2(2); dy=x1(1); DELTA=max(x2(1),x1(2));
+        dz = self.x2[1]
+        dy = self.x1[0]
+        DELTA = max(self.x2[0], self.x1[1])
+
+        # Y=NN*dy; Z=MM*dz;
+        self.Y = self.NN * dy
+        self.Z = self.MM * dz
+
+        # Y(2:2:end,:)=Y(2:2:end,:)+DELTA; % Offset per righe pari (lattice triangolare)
+        # In Python: righe con indice 1, 3, 5, ... (0-indexed = righe pari in MATLAB 1-indexed)
+        self.Y[1::2, :] = self.Y[1::2, :] + DELTA
+
+        # DZ=(max(Z(:))-min(Z(:))); DY=(max(Y(:))-min(Y(:)));
         self.Dz = np.max(self.Z) - np.min(self.Z)
+        self.Dy = np.max(self.Y) - np.min(self.Y)
+
+        # Aggiungi dimensione elemento come in PostProcessing
+        # Dy=Dy+x1(1); Dz=Dz+x2(2);
+        self.Dy_total = self.Dy + self.x1[0]
+        self.Dz_total = self.Dz + self.x2[1]
+
+        # Aperture truncation mask (elliptical) - default: no truncation
+        self.ArrayMask = np.ones_like(self.Y)
 
     def _generate_polar_coordinates(self):
-        """Genera coordinate polari per sampling (come PolarCoordinate_SteeringAngle)"""
+        """
+        Genera coordinate polari per sampling
+        FEDELE a PostProcessing_singlesolution.m righe 104-128 e Main_code.m righe 63-72
+        """
         beta = self.system.beta
+        lambda_ = self.system.lambda_
 
-        # Sampling angolare per plot
+        # AZIMUT AND ELEVATION SAMPLING (for plots)
+        # ele=-90:dele:90; azi=-90:dazi:90;
         self.ele = np.arange(-90, 90 + self.system.dele, self.system.dele)
         self.azi = np.arange(-90, 90 + self.system.dazi, self.system.dazi)
-        AZI, ELE = np.meshgrid(self.azi, self.ele)
 
-        # Coordinate spettrali visibili
-        self.WWae = beta * np.cos(np.deg2rad(90 - ELE))
-        self.Wvae = beta * np.sin(np.deg2rad(90 - ELE)) * np.sin(np.deg2rad(AZI))
+        # [AZI,ELE]=meshgrid(azi,ele);
+        self.AZI, self.ELE = np.meshgrid(self.azi, self.ele)
 
-        # Nyquist spectral sampling (per ottimizzazione)
-        chi = 2  # sampling factor
-        Nw = int(np.floor(chi * 4 * self.Dz / self.system.lambda_))
-        Nv = int(np.floor(chi * 4 * self.Dy / self.system.lambda_))
+        # WWae=beta*cosd(90-ELE); Vvae=beta*sind(90-ELE).*sind(AZI);
+        self.WWae = beta * np.cos(np.deg2rad(90 - self.ELE))
+        self.Vvae = beta * np.sin(np.deg2rad(90 - self.ELE)) * np.sin(
+            np.deg2rad(self.AZI)
+        )
 
-        ww = np.linspace(0, beta, Nw + 1)
-        ww = np.concatenate([-np.flip(ww[1:]), ww])
-        vv = np.linspace(0, beta, Nv + 1)
-        vv = np.concatenate([-np.flip(vv[1:]), vv])
+        # Per Main_code.m semplice: WW e VV sono gli stessi di WWae e Vvae
+        # Ma per PostProcessing usiamo Nyquist spectral sampling
 
-        WW, VV = np.meshgrid(ww, vv)
+        # Nyquist SPECTRAL SAMPLING FOR OPTIMIZATION
+        # chi=2; Nw=floor(chi*4*Dz/lambda); Nv=floor(chi*4*Dy/lambda);
+        chi = 2
+        self.Nw = int(np.floor(chi * 4 * self.Dz_total / lambda_))
+        self.Nv = int(np.floor(chi * 4 * self.Dy_total / lambda_))
 
-        # Coordinate equivalenti ele/azi
-        ELEi = 90 - np.rad2deg(np.arccos(np.clip(WW / beta, -1, 1)))
-        with np.errstate(invalid="ignore"):
-            AZIi = np.real(
-                np.rad2deg(
-                    np.arcsin(
-                        np.clip(VV / (beta * np.sin(np.deg2rad(90 - ELEi))), -1, 1)
-                    )
-                )
-            )
-        AZIi[Nv, 1:-1] = 0
-        AZIi[Nv, [0, -1]] = 90
+        # ww=linspace(0,beta,Nw+1); ww=[-fliplr(ww(2:end)), ww];
+        ww = np.linspace(0, beta, self.Nw + 1)
+        self.ww = np.concatenate([-np.flip(ww[1:]), ww])
 
-        self.Nw, self.Nv = Nw, Nv
-        self.WW, self.VV = WW, VV
-        self.ww, self.vv = ww, vv
-        self.ELEi, self.AZIi = ELEi, AZIi
-        self.AZI, self.ELE = AZI, ELE
+        # vv=linspace(0,beta,Nv+1); vv=[-fliplr(vv(2:end)), vv];
+        vv = np.linspace(0, beta, self.Nv + 1)
+        self.vv = np.concatenate([-np.flip(vv[1:]), vv])
 
-    def _generate_element_pattern(self, P: int = 1, Gel: float = 5.0):
+        # [WW,VV]=meshgrid(ww,vv);
+        self.WW, self.VV = np.meshgrid(self.ww, self.vv)
+
+        # ELEi=90-acosd(WW./beta);
+        # Clip per evitare valori fuori [-1, 1]
+        WW_clipped = np.clip(self.WW / beta, -1, 1)
+        self.ELEi = 90 - np.rad2deg(np.arccos(WW_clipped))
+
+        # AZIi=real(asind(VV./(beta*sind(90-ELEi))));
+        denom = beta * np.sin(np.deg2rad(90 - self.ELEi))
+        with np.errstate(divide="ignore", invalid="ignore"):
+            ratio = np.clip(self.VV / denom, -1, 1)
+            self.AZIi = np.real(np.rad2deg(np.arcsin(ratio)))
+
+        # AZIi(Nv+1,1:2*Nw+1)=0; AZIi(Nv+1,[1,2*Nw+1])=90;
+        # In MATLAB indices are 1-based, in Python 0-based
+        # Nv+1 in MATLAB -> Nv in Python (middle row)
+        self.AZIi[self.Nv, :] = 0
+        self.AZIi[self.Nv, 0] = 90
+        self.AZIi[self.Nv, -1] = 90
+
+    def _generate_element_pattern(self):
         """
-        Genera pattern elemento singolo (come ElementPattern_v2d0.m)
-        P=0: isotropico, P=1: coseno
+        Genera pattern elemento singolo
+        FEDELE a ElementPattern.m riga 38:
+        Fel=((cosd(ELE*0.9).*cosd(AZI*0.9)).^P);
         """
-        # Pattern su griglia ANGOLARE (per plot)
+        P = self.eef_config.P
+        Gel = self.eef_config.Gel
+
+        if self.eef_config.load_file == 1:
+            # Carica da file HFSS
+            self._load_element_pattern_from_file()
+        else:
+            # Pattern analitico - ESATTAMENTE come ElementPattern.m riga 38
+            # Fel=((cosd(ELE*0.9).*cosd(AZI*0.9)).^P);
+            if P == 0:
+                self.Fel = np.ones_like(self.ELE)
+            else:
+                self.Fel = (
+                    np.cos(np.deg2rad(self.ELE * 0.9))
+                    * np.cos(np.deg2rad(self.AZI * 0.9))
+                ) ** P
+
+        # Calcola Fel_VW sulla griglia spettrale (ELEi, AZIi)
         if P == 0:
-            Fel_angular = np.ones_like(self.WWae)
-        elif P == 1:
-            with np.errstate(invalid="ignore", divide="ignore"):
-                Fel_angular = np.maximum(0, np.cos(np.deg2rad(self.ELE))) ** P
-                Fel_angular = np.nan_to_num(Fel_angular)
+            self.Fel_VW = np.ones_like(self.ELEi)
+        else:
+            self.Fel_VW = (
+                np.cos(np.deg2rad(self.ELEi * 0.9))
+                * np.cos(np.deg2rad(self.AZIi * 0.9))
+            ) ** P
 
         # RPE in dB
-        RPE = 20 * np.log10(np.abs(Fel_angular) + 1e-10)
-        RPE = RPE - np.max(RPE) + Gel
+        self.RPE = 20 * np.log10(np.abs(self.Fel) + 1e-10)
+        self.RPE_ele_max = np.max(self.RPE) + Gel
 
-        # Pattern su griglia SPETTRALE (per calcolo array factor)
-        if P == 0:
-            Fel_VW = np.ones_like(self.WW)
-        elif P == 1:
-            with np.errstate(invalid="ignore", divide="ignore"):
-                Fel_VW = np.maximum(0, np.cos(np.deg2rad(self.ELEi))) ** P
-                Fel_VW = np.nan_to_num(Fel_VW)
-
-        self.Fel_angular = Fel_angular  # per plot
-        self.Fel_VW = Fel_VW  # per calcolo array factor
-        self.RPE = RPE
-        self.RPE_ele_max = np.max(RPE)
+        # G_boresight per normalizzazione
         self.G_boresight = self.RPE_ele_max + 10 * np.log10(self.Nel)
 
+    def _load_element_pattern_from_file(self):
+        """Carica pattern elemento da file HFSS - come ElementPattern.m righe 20-36"""
+        import os
+
+        file_path = os.path.join(
+            self.eef_config.rpe_folder, self.eef_config.rpe_file_name
+        )
+
+        try:
+            with open(file_path, "r") as fid:
+                lines = fid.readlines()
+
+            angsp = 361
+            RPE_elem = []
+            for line in lines[1:]:  # skip header
+                parts = line.strip().split(",")
+                if len(parts) >= 3:
+                    RPE_elem.append(float(parts[2]))
+
+            RPE = np.array(RPE_elem).reshape(angsp, angsp).T
+            self.Fel = 10 ** (RPE / 20)
+
+        except FileNotFoundError:
+            print(f"Warning: RPE file not found at {file_path}, using cosine pattern")
+            P = self.eef_config.P
+            self.Fel = (
+                np.cos(np.deg2rad(self.ELE * 0.9))
+                * np.cos(np.deg2rad(self.AZI * 0.9))
+            ) ** P
+
     def _generate_mask(self):
-        """Genera maschera SLL (come mask_design_v2d0.m)"""
-        # Trova indici in/out FoV
-        ele_cond = np.abs(self.ELE - self.system.ele0) <= self.mask.elem
-        azi_cond = np.abs(self.AZI - self.system.azi0) <= self.mask.azim
+        """
+        Genera maschera SLL
+        FEDELE a mask_design_v2d0.m
+        """
+        ele0 = self.system.ele0
+        azi0 = self.system.azi0
+        elem = self.mask.elem
+        azim = self.mask.azim
+        SLL_level = self.mask.SLL_level
+        SLLin = self.mask.SLLin
 
-        in_fov = ele_cond & azi_cond
-        out_fov = ~in_fov
+        # Trova indici in/out FoV sulla griglia angolare
+        # Inside FoV: |ele - ele0| <= elem AND |azi - azi0| <= azim
+        ele_cond = np.abs(self.ELE - ele0) <= elem
+        azi_cond = np.abs(self.AZI - azi0) <= azim
 
-        # Maschera: G_boresight - SLL_level
-        Mask_EA = np.full_like(self.ELE, self.G_boresight - self.mask.SLL_level)
-        Mask_EA[in_fov] = self.G_boresight - self.mask.SLLin
+        self.in_fov_mask = ele_cond & azi_cond
+        self.out_fov_mask = ~self.in_fov_mask
 
-        self.Mask_EA = Mask_EA
-        self.in_fov_mask = in_fov
-        self.out_fov_mask = out_fov
+        # Indici lineari per in/out FoV
+        self.Isll_in = np.where(self.in_fov_mask.flatten())[0]
+        self.Isll_out = np.where(self.out_fov_mask.flatten())[0]
 
-    def cluster_to_positions(
+        # Mask_EA: maschera in dB sulla griglia angolare
+        # Fuori FoV: G_boresight - SLL_level
+        # Dentro FoV: G_boresight - SLLin
+        self.Mask_EA = np.full_like(self.ELE, self.G_boresight - SLL_level, dtype=float)
+        self.Mask_EA[self.in_fov_mask] = self.G_boresight - SLLin
+
+        # Genera anche mask per griglia spettrale
+        ele_cond_vw = np.abs(self.ELEi - ele0) <= elem
+        azi_cond_vw = np.abs(self.AZIi - azi0) <= azim
+        self.in_fov_mask_vw = ele_cond_vw & azi_cond_vw
+        self.out_fov_mask_vw = ~self.in_fov_mask_vw
+
+    def generate_subarray_set(
+        self, B: np.ndarray
+    ) -> Tuple[np.ndarray, int]:
+        """
+        Genera set di subarray
+        FEDELE a SubArraySet_Generation.m
+
+        B: matrice Lsub x 2 con posizioni indice del cluster
+           es. B=[[0,0],[0,1]] per cluster verticale 2x1
+        """
+        B = np.atleast_2d(B)
+
+        A = np.sum(B, axis=0)
+
+        M = self.MM.flatten()
+        N = self.NN.flatten()
+
+        if A[0] == 0:  # vertical cluster
+            step_M = B.shape[0]
+            step_N = 1
+        elif A[1] == 0:  # horizontal cluster
+            step_N = B.shape[0]
+            step_M = 1
+        else:  # generic cluster
+            step_M = 1
+            step_N = 1
+
+        S = []
+
+        min_M, max_M = int(np.min(M)), int(np.max(M))
+        min_N, max_N = int(np.min(N)), int(np.max(N))
+
+        for kk in range(min_M, max_M + 1, step_M):
+            for hh in range(min_N, max_N + 1, step_N):
+                Bshift = B.copy()
+                Bshift[:, 0] = B[:, 0] + hh
+                Bshift[:, 1] = B[:, 1] + kk
+
+                # Check bounds
+                check = not np.any(
+                    (Bshift[:, 0] > max_N)
+                    | (Bshift[:, 0] < min_N)
+                    | (Bshift[:, 1] > max_M)
+                    | (Bshift[:, 1] < min_M)
+                )
+
+                if check:
+                    S.append(Bshift)
+
+        Nsub = len(S)
+        return S, Nsub
+
+    def index_to_position_cluster(
         self,
-        cluster_genes: np.ndarray,
-        cluster_type: np.ndarray = np.array([[0, 0], [0, 1]]),
-    ) -> Dict:
+        Cluster: List[np.ndarray],
+        ElementExc: Optional[np.ndarray] = None,
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
-        Converte genes cluster in posizioni fisiche
-        cluster_genes: array binario (1=cluster attivo, 0=inattivo)
-        cluster_type: [[0,0], [0,1]] = vertical 2x1
+        Converte indici cluster in posizioni fisiche
+        FEDELE a Index2Position_cluster_v2d0.m e Main_code.m righe 83-97
         """
-        # Genera tutti i possibili cluster positions
-        possible_clusters = self._generate_all_clusters(cluster_type)
+        if ElementExc is None:
+            ElementExc = np.ones((self.lattice.Nz, self.lattice.Ny))
 
-        # Seleziona solo quelli attivi
-        active_indices = np.where(cluster_genes == 1)[0]
-        if len(active_indices) == 0:
-            return None
+        Ntrans = len(Cluster)
 
-        # Limita al numero di cluster genes
-        active_indices = active_indices[
-            : min(len(active_indices), len(possible_clusters))
-        ]
+        # Trova dimensione massima cluster
+        max_Lsub = max(c.shape[0] for c in Cluster)
 
-        clusters = [possible_clusters[i] for i in active_indices]
+        # Inizializza arrays
+        Yc = np.full((max_Lsub, Ntrans), np.nan)
+        Zc = np.full((max_Lsub, Ntrans), np.nan)
+        Ac = np.full((max_Lsub, Ntrans), np.nan)
 
-        # Calcola posizioni e phase center
-        Yc_all = []
-        Zc_all = []
-        Lsub = []
+        min_NN = int(np.min(self.NN))
+        min_MM = int(np.min(self.MM))
 
-        for cluster in clusters:
-            # Coordinate elementi nel cluster
-            y_coords = self.Y.flatten()[cluster]
-            z_coords = self.Z.flatten()[cluster]
+        for kk, cluster in enumerate(Cluster):
+            for l1 in range(cluster.shape[0]):
+                # Iy=Cluster(l1,2*kk+1)-min(NN(:))+1;
+                # Iz=Cluster(l1,2*kk+2)-min(MM(:))+1;
+                Iy = int(cluster[l1, 0] - min_NN)
+                Iz = int(cluster[l1, 1] - min_MM)
 
-            Yc_all.append(y_coords)
-            Zc_all.append(z_coords)
-            Lsub.append(len(cluster))
+                # Yc(l1,kk+1)=Y(Iz,Iy); Zc(l1,kk+1)=Z(Iz,Iy);
+                Yc[l1, kk] = self.Y[Iz, Iy]
+                Zc[l1, kk] = self.Z[Iz, Iy]
+                Ac[l1, kk] = ElementExc[Iz, Iy]
 
-        # Phase centers (media coordinate)
-        Yc_m = np.array([np.mean(yc) for yc in Yc_all])
-        Zc_m = np.array([np.mean(zc) for zc in Zc_all])
+        return Yc, Zc, Ac
 
-        return {
-            "clusters": clusters,
-            "Yc": Yc_all,
-            "Zc": Zc_all,
-            "Yc_m": Yc_m,
-            "Zc_m": Zc_m,
-            "Lsub": np.array(Lsub),
-            "Ntrans": len(clusters),
-        }
-
-    def _generate_all_clusters(self, cluster_type: np.ndarray) -> List[np.ndarray]:
-        """Genera tutte le posizioni possibili per un dato tipo di cluster"""
-        clusters = []
-
-        # Per cluster 2x1 verticale: [[0,0], [0,1]]
-        if np.array_equal(cluster_type, np.array([[0, 0], [0, 1]])):
-            # Cluster verticali di 2 elementi
-            for j in range(self.lattice.Ny):
-                for i in range(0, self.lattice.Nz - 1, 2):
-                    idx1 = i * self.lattice.Ny + j
-                    idx2 = (i + 1) * self.lattice.Ny + j
-                    clusters.append(np.array([idx1, idx2]))
-
-        return clusters
-
-    def calculate_beamforming_weights(self, cluster_info: Dict) -> np.ndarray:
+    def coefficient_evaluation(
+        self,
+        Zc_m: np.ndarray,
+        Yc_m: np.ndarray,
+        Lsub: np.ndarray,
+    ) -> np.ndarray:
         """
-        Calcola coefficienti beamforming (come coefficient_evaluation.m)
+        Calcola coefficienti beamforming
+        FEDELE a Main_code.m righe 106-110:
+
+        v0=beta*sind(90-ele0)*sind(azi0);
+        w0=beta*cosd(90-ele0);
+        Phase_m=exp(-1i*(w0*Zc_m+v0*Yc_m));
+        Amplit_m = ones(1,Ntrans)./Lsub;
+        c0=Amplit_m.*Phase_m;
         """
         beta = self.system.beta
-        azi0_rad = np.deg2rad(self.system.azi0)
-        ele0_rad = np.deg2rad(self.system.ele0)
+        ele0 = self.system.ele0
+        azi0 = self.system.azi0
 
-        # Vettore d'onda direzione steering
-        v0 = beta * np.sin(np.pi / 2 - ele0_rad) * np.sin(azi0_rad)
-        w0 = beta * np.cos(np.pi / 2 - ele0_rad)
+        # v0=beta*sind(90-ele0)*sind(azi0);
+        v0 = beta * np.sin(np.deg2rad(90 - ele0)) * np.sin(np.deg2rad(azi0))
 
-        # Coefficienti: phase shift per puntare in direzione (azi0, ele0)
-        Yc_m = cluster_info["Yc_m"]
-        Zc_m = cluster_info["Zc_m"]
-        Lsub = cluster_info["Lsub"]
+        # w0=beta*cosd(90-ele0);
+        w0 = beta * np.cos(np.deg2rad(90 - ele0))
 
-        # Amplitude: normalizzata per cluster size
-        Amplit = np.sqrt(1.0 / Lsub)
+        # Phase_m=exp(-1i*(w0*Zc_m+v0*Yc_m));
+        Phase_m = np.exp(-1j * (w0 * Zc_m + v0 * Yc_m))
 
-        # Phase: steering phase
-        Phase = np.exp(-1j * (w0 * Zc_m + v0 * Yc_m))
+        # Amplit_m = ones(1,Ntrans)./Lsub;
+        Amplit_m = 1.0 / Lsub
 
-        # Coefficienti complessi
-        c0 = Amplit * Phase
+        # c0=Amplit_m.*Phase_m;
+        c0 = Amplit_m * Phase_m
 
         return c0
 
-    def calculate_array_pattern(self, cluster_info: Dict, c0: np.ndarray) -> Dict:
+    def kernel1_rpe(
+        self,
+        Lsub: np.ndarray,
+        Ac: np.ndarray,
+        Yc: np.ndarray,
+        Zc: np.ndarray,
+        c0: np.ndarray,
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """
-        Calcola pattern array totale (come Kernel1_RPE.m)
+        Calcola pattern array tramite kernel
+        FEDELE a Kernel1_RPE e Main_code.m righe 129-140:
+
+        KerFF_sub=zeros(Nw*Nv,Ntrans);
+        for kk=1:Ntrans
+            for jj=1:Lsub(kk)
+                KerFF_sub(:,kk)=KerFF_sub(:,kk)+exp(1i*(VV(:)*Yc(jj,kk)+WW(:)*Zc(jj,kk))).*Fel_VW(:);
+            end
+        end
+        FF=KerFF_sub*c0.';
+        FF_norm=FF./max((FF(:)));
         """
-        Ntrans = cluster_info["Ntrans"]
-        Lsub = cluster_info["Lsub"]
+        Ntrans = len(Lsub)
 
-        # Array factor su grid spettrale (WW, VV)
-        AF = np.zeros_like(self.WW, dtype=complex)
+        # Usa griglia spettrale
+        VV_flat = self.VV.flatten()
+        WW_flat = self.WW.flatten()
+        Fel_VW_flat = self.Fel_VW.flatten()
 
-        for k in range(Ntrans):
-            # Coordinate elementi nel k-esimo cluster
-            Yc = cluster_info["Yc"][k]
-            Zc = cluster_info["Zc"][k]
+        Npoints = len(VV_flat)
 
-            # Contributo cluster k
-            cluster_af = np.zeros_like(self.WW, dtype=complex)
-            for idx in range(len(Yc)):
-                phase_shift = np.exp(1j * (self.WW * Zc[idx] + self.VV * Yc[idx]))
-                cluster_af += phase_shift
+        # KerFF_sub=zeros(Nw*Nv,Ntrans);
+        KerFF_sub = np.zeros((Npoints, Ntrans), dtype=complex)
 
-            # Moltiplica per pattern elemento e coefficiente
-            AF += c0[k] * cluster_af * self.Fel_VW
+        for kk in range(Ntrans):
+            Lsub_k = int(Lsub[kk])
+            for jj in range(Lsub_k):
+                if not np.isnan(Yc[jj, kk]) and not np.isnan(Zc[jj, kk]):
+                    # KerFF_sub(:,kk)=KerFF_sub(:,kk)+exp(1i*(VV(:)*Yc(jj,kk)+WW(:)*Zc(jj,kk))).*Fel_VW(:);
+                    phase = np.exp(1j * (VV_flat * Yc[jj, kk] + WW_flat * Zc[jj, kk]))
+                    KerFF_sub[:, kk] += phase * Fel_VW_flat
 
-        # Pattern normalizzato
-        FF_norm = np.abs(AF) ** 2
+        # FF=KerFF_sub*c0.';
+        FF = KerFF_sub @ c0.T
 
-        # Normalizzazione
+        # FF_norm=FF./max((FF(:)));
+        FF_norm = FF / (np.max(np.abs(FF)) + 1e-10)
+
+        # Reshape to 2D
+        # FF_norm_2D=reshape(FF_norm,Nv,Nw); (MATLAB shape)
+        # In numpy, VV ha shape (2*Nv+1, 2*Nw+1), quindi:
+        FF_norm_2D = FF_norm.reshape(self.VV.shape)
+
+        # Fopt_dB=20*log10(abs(FF_norm_2D));
+        FF_norm_dB = 20 * np.log10(np.abs(FF_norm_2D) + 1e-10)
+
+        # Interpola su griglia angolare per valutazione finale
+        # Usa griddata per interpolare da (WW, VV) a (WWae, Vvae)
+        points = np.column_stack([WW_flat, VV_flat])
+        values = FF_norm_dB.flatten()
+
+        WWae_flat = self.WWae.flatten()
+        Vvae_flat = self.Vvae.flatten()
+        xi = np.column_stack([WWae_flat, Vvae_flat])
+
+        FF_I_dB_flat = griddata(points, values, xi, method="linear", fill_value=-100)
+        FF_I_dB = FF_I_dB_flat.reshape(self.WWae.shape)
+
+        # Normalizza rispetto a G_boresight
+        # FF_I_dB già è normalizzato, ma dobbiamo aggiungere il guadagno
+        # G_boresight=max(max(RPE))+10*log10(Nel);
         Nel_active = np.sum(Lsub)
-        FF_norm = FF_norm / (np.max(FF_norm) + 1e-10) * Nel_active
+        FF_I_dB = FF_I_dB + self.RPE_ele_max + 10 * np.log10(Nel_active)
 
-        # dB
-        FF_norm_dB = 10 * np.log10(FF_norm + 1e-10)
+        return FF_norm_dB, FF_I_dB, KerFF_sub, np.abs(FF_norm_2D) ** 2
 
-        # Riferito a G_boresight
-        FF_I_dB_spectral = FF_norm_dB - 10 * np.log10(Nel_active) + self.RPE_ele_max
+    def compute_sll(
+        self, FF_I_dB: np.ndarray
+    ) -> Tuple[float, float]:
+        """
+        Calcola SLL in/out FoV
+        FEDELE a SLL_in_out function
+        """
+        # SLL fuori FoV
+        sll_out_values = FF_I_dB[self.out_fov_mask]
+        sll_out = np.max(sll_out_values) if len(sll_out_values) > 0 else -100
 
-        # Interpola su griglia angolare per valutazione SLL
-        # Flatten grids
-        ww_flat = self.WW.flatten()
-        vv_flat = self.VV.flatten()
-        ff_flat = FF_I_dB_spectral.flatten()
+        # SLL dentro FoV (escludendo il main beam)
+        sll_in_values = FF_I_dB[self.in_fov_mask]
+        # Trova il massimo (main beam) ed escludilo
+        if len(sll_in_values) > 0:
+            max_val = np.max(sll_in_values)
+            # SLL è il secondo massimo o il max delle regioni laterali
+            sll_in = np.max(sll_in_values[sll_in_values < max_val - 0.1]) if np.any(sll_in_values < max_val - 0.1) else max_val
+        else:
+            sll_in = -100
 
-        # Coordinate angolari target
-        wwae_flat = self.WWae.flatten()
-        wvae_flat = self.Wvae.flatten()
+        return sll_in, sll_out
 
-        # Interpola
-        FF_I_dB_angular = griddata(
-            (ww_flat, vv_flat),
-            ff_flat,
-            (wwae_flat, wvae_flat),
-            method="linear",
-            fill_value=-100,
+    def compute_cost_function(
+        self, FF_I_dB: np.ndarray
+    ) -> int:
+        """
+        Calcola cost function come in MATLAB
+        FEDELE a Generation_code.m:
+        Constr=FF_I_dB-MASK.Mask_EA;
+        Cm=sum(sum(Constr>0));
+        """
+        Constr = FF_I_dB - self.Mask_EA
+        Cm = np.sum(Constr > 0)
+        return int(Cm)
+
+    def evaluate_clustering(
+        self,
+        Cluster: List[np.ndarray],
+        ElementExc: Optional[np.ndarray] = None,
+    ) -> Dict:
+        """
+        Valuta una configurazione di clustering completa
+        Combina tutte le funzioni per calcolare il pattern e le metriche
+        """
+        if ElementExc is None:
+            ElementExc = np.ones((self.lattice.Nz, self.lattice.Ny))
+
+        # Converti indici in posizioni
+        Yc, Zc, Ac = self.index_to_position_cluster(Cluster, ElementExc)
+
+        Ntrans = len(Cluster)
+
+        # Calcola Lsub, Zc_m, Yc_m
+        Lsub = np.array([c.shape[0] for c in Cluster])
+        Zc_m = np.array([np.nanmean(Zc[:Lsub[k], k]) for k in range(Ntrans)])
+        Yc_m = np.array([np.nanmean(Yc[:Lsub[k], k]) for k in range(Ntrans)])
+
+        # Calcola coefficienti
+        c0 = self.coefficient_evaluation(Zc_m, Yc_m, Lsub)
+
+        # Calcola pattern
+        FF_norm_dB, FF_I_dB, KerFF_sub, FF_norm = self.kernel1_rpe(
+            Lsub, Ac, Yc, Zc, c0
         )
-        FF_I_dB_angular = FF_I_dB_angular.reshape(self.WWae.shape)
 
-        return {
-            "FF_norm_dB": FF_norm_dB,
-            "FF_I_dB": FF_I_dB_angular,  # su griglia angolare per SLL
-            "AF": AF,
-        }
+        # Calcola cost function
+        Cm = self.compute_cost_function(FF_I_dB)
 
-    def evaluate_sll(self, cluster_genes: np.ndarray) -> Dict:
-        """
-        Valuta SLL per una configurazione di clustering
-        QUESTA È LA FUNZIONE CHIAVE PER IL GA
-        """
-        # Converti genes in cluster positions
-        cluster_info = self.cluster_to_positions(cluster_genes)
-
-        if cluster_info is None:
-            return {
-                "sll_out": 0.0,
-                "sll_in": 0.0,
-                "n_clusters": 0,
-                "fitness": -1000.0,
-                "valid": False,
-            }
-
-        # Calcola coefficienti beamforming
-        c0 = self.calculate_beamforming_weights(cluster_info)
-
-        # Calcola pattern array
-        pattern = self.calculate_array_pattern(cluster_info, c0)
-        FF_I_dB = pattern["FF_I_dB"]  # già su griglia angolare
+        # Calcola SLL
+        sll_in, sll_out = self.compute_sll(FF_I_dB)
 
         # Trova massimo
         max_idx = np.unravel_index(np.argmax(FF_I_dB), FF_I_dB.shape)
+        theta_max = self.ele[max_idx[0]]
+        phi_max = self.azi[max_idx[1]]
 
-        # SLL in/out FoV
-        sll_out_values = FF_I_dB[self.out_fov_mask]
-        sll_in_values = FF_I_dB[self.in_fov_mask]
-
-        sll_out = np.max(sll_out_values) if len(sll_out_values) > 0 else -100
-        sll_in = np.max(sll_in_values) if len(sll_in_values) > 0 else -100
+        # Indici steering angle
+        Iele = np.argmin(np.abs(self.ele - self.system.ele0))
+        Iazi = np.argmin(np.abs(self.azi - self.system.azi0))
 
         # Scan loss
-        G_max = np.max(FF_I_dB)
-        scan_loss = self.G_boresight - G_max
-
-        # Fitness: vogliamo SLL basso, pochi cluster
-        n_clusters = cluster_info["Ntrans"]
-        hardware_penalty = (n_clusters / self.Nel) * 3
-
-        fitness = -abs(sll_out) - hardware_penalty
+        G_boresight = self.RPE_ele_max + 10 * np.log10(np.sum(Lsub))
+        SL_maxpointing = G_boresight - FF_I_dB[max_idx]
+        SL_theta_phi = G_boresight - FF_I_dB[Iele, Iazi]
 
         return {
-            "sll_out": sll_out,
+            "Yc": Yc,
+            "Zc": Zc,
+            "Ac": Ac,
+            "Yc_m": Yc_m,
+            "Zc_m": Zc_m,
+            "Lsub": Lsub,
+            "Ntrans": Ntrans,
+            "c0": c0,
+            "FF_norm_dB": FF_norm_dB,
+            "FF_I_dB": FF_I_dB,
+            "KerFF_sub": KerFF_sub,
+            "Cm": Cm,
             "sll_in": sll_in,
-            "n_clusters": n_clusters,
-            "scan_loss": scan_loss,
-            "fitness": fitness,
-            "valid": True,
-            "pattern": FF_I_dB,
+            "sll_out": sll_out,
+            "theta_max": theta_max,
+            "phi_max": phi_max,
+            "SL_maxpointing": SL_maxpointing,
+            "SL_theta_phi": SL_theta_phi,
+            "G_boresight": G_boresight,
         }
 
 
 def test_antenna_physics():
-    """Test rapido"""
-    # Configurazione 16x16
-    lattice = LatticeConfig(Nz=16, Ny=16, dist_z=0.6, dist_y=0.53)
-
-    freq = 29.5e9
-    lambda_ = 3e8 / freq
-    beta = 2 * np.pi / lambda_
-    system = SystemConfig(freq=freq, lambda_=lambda_, beta=beta, azi0=0, ele0=0)
-
+    """Test rapido - confronto con MATLAB"""
+    # Configurazione come Main_code.m
+    lattice = LatticeConfig(Nz=8, Ny=8, dist_z=0.7, dist_y=0.5, lattice_type=1)
+    system = SystemConfig(freq=29e9, azi0=0, ele0=10)
     mask = MaskConfig(elem=30, azim=60, SLL_level=20, SLLin=15)
+    eef = ElementPatternConfig(P=1, Gel=5, load_file=0)
 
     # Crea array
     print("Inizializzando array...")
-    array = AntennaArray(lattice, system, mask)
+    array = AntennaArray(lattice, system, mask, eef)
 
-    # Test clustering random
-    n_possible_clusters = (lattice.Nz // 2) * lattice.Ny
-    cluster_genes = np.random.randint(0, 2, size=n_possible_clusters)
-    cluster_genes[:64] = 1  # attiva primi 64 cluster
+    # Test clustering: B=[0,0;0,1] vertical 2x1
+    B = np.array([[0, 0], [0, 1]])
+    S, Nsub = array.generate_subarray_set(B)
+    print(f"Generati {Nsub} cluster di tipo 2x1 verticale")
 
-    # Valuta SLL
-    print("Valutando SLL...")
-    result = array.evaluate_sll(cluster_genes)
+    # Valuta clustering
+    print("Valutando clustering...")
+    result = array.evaluate_clustering(S)
 
-    print("\nTest Antenna Physics:")
-    print(f"  SLL out: {result['sll_out']:.2f} dB")
-    print(f"  SLL in: {result['sll_in']:.2f} dB")
-    print(f"  N clusters: {result['n_clusters']}")
-    print(f"  Fitness: {result['fitness']:.2f}")
-    print(f"  Valid: {result['valid']}")
+    print("\n=== Test Antenna Physics (fedele a MATLAB) ===")
+    print(f"  Ntrans (num cluster): {result['Ntrans']}")
+    print(f"  Nel totali: {np.sum(result['Lsub'])}")
+    print(f"  Cost function Cm: {result['Cm']}")
+    print(f"  SLL out FoV: {result['sll_out']:.2f} dB")
+    print(f"  SLL in FoV: {result['sll_in']:.2f} dB")
+    print(f"  Max pointing: theta={result['theta_max']:.1f}, phi={result['phi_max']:.1f}")
+    print(f"  Scan loss max: {result['SL_maxpointing']:.2f} dB")
+    print(f"  Scan loss steering: {result['SL_theta_phi']:.2f} dB")
+    print(f"  G_boresight: {result['G_boresight']:.2f} dBi")
 
     return array, result
 
