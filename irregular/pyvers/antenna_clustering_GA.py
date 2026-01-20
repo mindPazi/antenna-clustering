@@ -298,11 +298,12 @@ class IrregularClusteringMonteCarlo:
         self,
         selected_rows: np.ndarray,
         current_Cm: int,
-        max_iterations: int = 50,
+        max_iterations: int = 10,
     ) -> Tuple[np.ndarray, int]:
         """
         OPT: Local search refinement - tries to improve a solution by
         flipping individual cluster selections (add/remove one cluster at a time).
+        OPT: Reduced max_iterations from 50 to 10 for speed.
         """
         best_rows = selected_rows.copy()
         best_Cm = current_Cm
@@ -310,8 +311,8 @@ class IrregularClusteringMonteCarlo:
         for _ in range(max_iterations):
             improved = False
 
-            # OPT: Try flipping each cluster selection
-            indices_to_try = np.random.permutation(self.total_clusters)[:min(20, self.total_clusters)]
+            # OPT: Try flipping each cluster selection (reduced from 20 to 10 for speed)
+            indices_to_try = np.random.permutation(self.total_clusters)[:min(10, self.total_clusters)]
 
             for idx in indices_to_try:
                 # OPT: Create candidate by flipping one bit
@@ -420,9 +421,10 @@ class IrregularClusteringMonteCarlo:
             Nel_active = int(np.sum(result["Lsub"]))
 
             # OPT: Apply local search refinement to promising solutions
-            if use_optimizations and Cm < self.sim_config.Cost_thr * 2:
+            # Only every 10 iterations AND only if Cm is better than 80% of best so far
+            if use_optimizations and Cm < best_Cm_so_far * 0.8 and ij_cont % 10 == 0:
                 old_Cm = Cm
-                selected_rows, Cm = self._local_search(selected_rows, Cm, max_iterations=30)
+                selected_rows, Cm = self._local_search(selected_rows, Cm, max_iterations=10)
                 if verbose and Cm < old_Cm:
                     print(f"\n  >> Local search migliorato: Cm {old_Cm} -> {Cm}")
                 # OPT: Re-evaluate with refined solution

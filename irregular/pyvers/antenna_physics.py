@@ -5,7 +5,7 @@ Versione corretta - 100% fedele al codice MATLAB originale
 """
 
 import numpy as np
-from scipy.interpolate import interp2d, griddata
+from scipy.interpolate import interp2d, griddata, LinearNDInterpolator
 from typing import Tuple, List, Dict, Optional, Union
 from dataclasses import dataclass, field
 
@@ -532,14 +532,18 @@ class AntennaArray:
         # Fopt_dB=20*log10(abs(FF_norm_2D));
         FF_norm_dB = 20 * np.log10(np.abs(FF_norm_2D) + 1e-10)
 
-        # OPT: Cache interpolation setup - avoid recomputing static grid points
+        # OPT: Cache interpolation setup - use LinearNDInterpolator for much faster repeated interpolation
         if not hasattr(self, '_interp_points'):
             self._interp_points = np.column_stack([WW_flat, VV_flat])
             self._interp_xi = np.column_stack([self.WWae.flatten(), self.Vvae.flatten()])
+            # OPT: Pre-compute Delaunay triangulation (expensive, but done only once)
+            from scipy.spatial import Delaunay
+            self._delaunay = Delaunay(self._interp_points)
 
-        # Interpola su griglia angolare per valutazione finale
+        # OPT: Use cached triangulation for fast interpolation
         values = FF_norm_dB.flatten()
-        FF_I_dB_flat = griddata(self._interp_points, values, self._interp_xi, method="linear", fill_value=-100)
+        interpolator = LinearNDInterpolator(self._delaunay, values, fill_value=-100)
+        FF_I_dB_flat = interpolator(self._interp_xi)
         FF_I_dB = FF_I_dB_flat.reshape(self.WWae.shape)
 
         # Normalizza rispetto a G_boresight

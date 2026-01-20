@@ -19,6 +19,7 @@ The script will run both versions with the same configuration and print:
 
 import numpy as np
 import time
+import json
 from antenna_physics import (
     AntennaArray,
     LatticeConfig,
@@ -224,6 +225,57 @@ def run_comparison(Niter: int = 200, seed: int = 42):
     print("  4. Adaptive probability sampling based on solution quality")
     print()
 
+    # ==================== SAVE RESULTS TO JSON ====================
+    def extract_stats(results):
+        """Extract statistics lists from results for plotting."""
+        all_Cm = [r["Cm"] for r in results["simulation"]]
+        all_Ntrans = [r["Ntrans"] for r in results["simulation"]]
+        all_Nel = [r["Nel"] for r in results["simulation"]]
+        all_sll_out = [r["sll_out"] for r in results["simulation"]]
+        all_sll_in = [r["sll_in"] for r in results["simulation"]]
+        return {
+            "all_Cm": all_Cm,
+            "all_Ntrans": all_Ntrans,
+            "all_Nel": all_Nel,
+            "all_sll_out": all_sll_out,
+            "all_sll_in": all_sll_in,
+        }
+
+    # Save original results
+    json_data_original = {
+        "algorithm": "original",
+        "n_valid_solutions": results_original["n_valid_solutions"],
+        "execution_time": time_original,
+        "statistics": extract_stats(results_original),
+    }
+    with open("mc_results_original.json", "w") as f:
+        json.dump(json_data_original, f, indent=2)
+    print("Results saved to: mc_results_original.json")
+
+    # Save optimized results
+    json_data_optimized = {
+        "algorithm": "optimized",
+        "n_valid_solutions": results_optimized["n_valid_solutions"],
+        "execution_time": time_optimized,
+        "statistics": extract_stats(results_optimized),
+    }
+    with open("mc_results_optimized.json", "w") as f:
+        json.dump(json_data_optimized, f, indent=2)
+    print("Results saved to: mc_results_optimized.json")
+
+    # Save combined comparison (compatible with plot_results.py)
+    json_data_combined = {
+        "statistics": extract_stats(results_optimized),  # Default to optimized for plotting
+        "comparison": {
+            "original": json_data_original,
+            "optimized": json_data_optimized,
+        }
+    }
+    with open("mc_results.json", "w") as f:
+        json.dump(json_data_combined, f, indent=2)
+    print("Combined results saved to: mc_results.json (compatible with plot_results.py)")
+    print()
+
     return results_original, results_optimized
 
 
@@ -248,6 +300,9 @@ def main():
 
     print("To run with more iterations:")
     print("  python -c \"from compare_optimizations import run_comparison; run_comparison(Niter=1000)\"")
+    print()
+    print("To plot the results:")
+    print("  python plot_results.py")
     print()
 
 
