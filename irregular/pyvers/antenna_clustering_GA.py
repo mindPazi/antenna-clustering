@@ -166,6 +166,11 @@ class IrregularClusteringMonteCarlo:
         self.all_Ntrans = []  # Numero di cluster per ogni iterazione
         self.all_Nel = []  # Numero di elementi per ogni iterazione
 
+        # OPT: Adaptive probability array - tracks which clusters appear in good solutions
+        self.total_clusters = sum(self.N_all)
+        self._cluster_scores = np.ones(self.total_clusters)  # OPT: Initialized uniformly
+        self._selection_counts = np.ones(self.total_clusters)  # OPT: Avoid division by zero
+
     def _select_random_clusters(self) -> Tuple[List[np.ndarray], np.ndarray]:
         """
         Seleziona un sottoinsieme random di cluster
@@ -191,16 +196,178 @@ class IrregularClusteringMonteCarlo:
 
         return selected_clusters, all_selected
 
-    def run(self, verbose: bool = True) -> Dict:
+    def _select_adaptive_clusters(self) -> Tuple[List[np.ndarray], np.ndarray]:
+        """
+        OPT: Seleziona cluster con probabilità adattiva basata su performance passate.
+        Cluster che appaiono in buone soluzioni hanno maggiore probabilità di essere selezionati.
+        """
+        selected_clusters = []
+        selected_rows = []
+
+        # OPT: Compute selection probabilities from historical performance
+        probs = self._cluster_scores / self._selection_counts
+        probs = np.clip(probs, 0.1, 0.9)  # OPT: Keep probabilities bounded to maintain exploration
+
+        offset = 0
+        for bb, S in enumerate(self.S_all):
+            Nsub = self.N_all[bb]
+
+            # OPT: Use adaptive probabilities instead of uniform 0.5
+            cluster_probs = probs[offset : offset + Nsub]
+            selection = (np.random.random(Nsub) < cluster_probs).astype(int)
+            selected_rows.append(selection)
+
+            for idx in np.where(selection == 1)[0]:
+                selected_clusters.append(S[idx])
+
+            offset += Nsub
+
+        all_selected = np.concatenate(selected_rows)
+        return selected_clusters, all_selected
+
+    def _update_adaptive_scores(self, selected_rows: np.ndarray, Cm: int):
+        """
+        OPT: Update adaptive scores based on solution quality.
+        Lower cost = better solution = higher future selection probability.
+        """
+        # OPT: Reward good solutions (low Cm) and penalize bad ones
+        reward = max(0, self.sim_config.Cost_thr - Cm) / self.sim_config.Cost_thr
+        indices = np.where(selected_rows == 1)[0]
+
+        self._cluster_scores[indices] += reward
+        self._selection_counts[indices] += 1
+
+    def _greedy_initialization(self, max_clusters: int = None) -> Tuple[List[np.ndarray], np.ndarray]:
+        """
+        OPT: Greedy initialization - builds a solution by iteratively adding
+        clusters that provide the best coverage without overlapping.
+        This provides a much better starting point than random selection.
+        """
+        if max_clusters is None:
+            # OPT: Target approximately half the maximum possible clusters
+            max_clusters = self.total_clusters // 2
+
+        # OPT: Flatten all clusters into a single list with tracking
+        all_clusters = []
+        cluster_to_flat_idx = []
+        offset = 0
+        for bb, S in enumerate(self.S_all):
+            for idx, cluster in enumerate(S):
+                all_clusters.append(cluster)
+                cluster_to_flat_idx.append(offset + idx)
+            offset += self.N_all[bb]
+
+        # OPT: Track which element positions are already covered
+        covered_elements = set()
+        selected_flat_indices = []
+
+        # OPT: Greedy selection - prioritize clusters that cover new elements
+        available_indices = list(range(len(all_clusters)))
+        np.random.shuffle(available_indices)  # OPT: Randomize order for diversity
+
+        for idx in available_indices:
+            if len(selected_flat_indices) >= max_clusters:
+                break
+
+            cluster = all_clusters[idx]
+            # OPT: Convert cluster positions to hashable tuples
+            cluster_elements = set(tuple(pos) for pos in cluster)
+
+            # OPT: Check for overlap with already covered elements
+            overlap = cluster_elements & covered_elements
+            if len(overlap) == 0:  # OPT: No overlap - add this cluster
+                selected_flat_indices.append(cluster_to_flat_idx[idx])
+                covered_elements.update(cluster_elements)
+
+        # OPT: Build selection array and cluster list
+        selected_rows = np.zeros(self.total_clusters, dtype=int)
+        selected_rows[selected_flat_indices] = 1
+
+        selected_clusters = []
+        offset = 0
+        for bb, S in enumerate(self.S_all):
+            Nsub = self.N_all[bb]
+            for idx in range(Nsub):
+                if selected_rows[offset + idx] == 1:
+                    selected_clusters.append(S[idx])
+            offset += Nsub
+
+        return selected_clusters, selected_rows
+
+    def _local_search(
+        self,
+        selected_rows: np.ndarray,
+        current_Cm: int,
+        max_iterations: int = 50,
+    ) -> Tuple[np.ndarray, int]:
+        """
+        OPT: Local search refinement - tries to improve a solution by
+        flipping individual cluster selections (add/remove one cluster at a time).
+        """
+        best_rows = selected_rows.copy()
+        best_Cm = current_Cm
+
+        for _ in range(max_iterations):
+            improved = False
+
+            # OPT: Try flipping each cluster selection
+            indices_to_try = np.random.permutation(self.total_clusters)[:min(20, self.total_clusters)]
+
+            for idx in indices_to_try:
+                # OPT: Create candidate by flipping one bit
+                candidate_rows = best_rows.copy()
+                candidate_rows[idx] = 1 - candidate_rows[idx]
+
+                # OPT: Reconstruct clusters from selection
+                clusters = self._rows_to_clusters(candidate_rows)
+                if len(clusters) == 0:
+                    continue
+
+                # OPT: Evaluate candidate
+                result = self.array.evaluate_clustering(clusters)
+                candidate_Cm = result["Cm"]
+
+                # OPT: Accept if better
+                if candidate_Cm < best_Cm:
+                    best_rows = candidate_rows
+                    best_Cm = candidate_Cm
+                    improved = True
+                    break  # OPT: First improvement strategy for speed
+
+            # OPT: Stop if no improvement found
+            if not improved:
+                break
+
+        return best_rows, best_Cm
+
+    def _rows_to_clusters(self, selected_rows: np.ndarray) -> List[np.ndarray]:
+        """
+        OPT: Helper to convert selection array back to cluster list.
+        """
+        clusters = []
+        offset = 0
+        for bb, S in enumerate(self.S_all):
+            Nsub = self.N_all[bb]
+            for idx in range(Nsub):
+                if selected_rows[offset + idx] == 1:
+                    clusters.append(S[idx])
+            offset += Nsub
+        return clusters
+
+    def run(self, verbose: bool = True, use_optimizations: bool = True) -> Dict:
         """
         Esegue ottimizzazione Monte Carlo
         FEDELE a Generation_code.m loop principale
+
+        OPT: use_optimizations=True enables greedy init, local search, adaptive sampling
         """
         start_time = time.time()
 
         if verbose:
             print("=" * 60)
             print("IRREGULAR CLUSTERING - MONTE CARLO OPTIMIZATION")
+            if use_optimizations:
+                print("  [OPTIMIZED MODE: greedy init + local search + adaptive]")
             print("=" * 60)
             print(f"Array: {self.array.lattice.Nz}x{self.array.lattice.Ny} = {self.array.Nel} elementi")
             print(f"Frequenza: {self.array.system.freq/1e9:.1f} GHz")
@@ -210,10 +377,33 @@ class IrregularClusteringMonteCarlo:
             print()
 
         sss = 0  # Contatore soluzioni valide
+        best_Cm_so_far = float("inf")  # OPT: Track best solution for progress reporting
 
         for ij_cont in range(1, self.sim_config.Niter + 1):
-            # Seleziona cluster random
-            Cluster, selected_rows = self._select_random_clusters()
+            # OPT: Print progress every 10 iterations for visibility
+            if verbose and ij_cont % 10 == 0:
+                pct = (ij_cont / self.sim_config.Niter) * 100
+                print(f"  [Progresso: {ij_cont}/{self.sim_config.Niter} ({pct:.0f}%)]", end="\r")
+
+            # OPT: Use greedy initialization for first few iterations, then adaptive sampling
+            if use_optimizations and ij_cont <= 10:
+                if verbose and ij_cont == 1:
+                    print("  >> Fase 1: Greedy initialization (iter 1-10)")
+                Cluster, selected_rows = self._greedy_initialization()
+            elif use_optimizations and ij_cont == 11:
+                if verbose:
+                    print("\n  >> Fase 2: Random sampling (iter 11-50)")
+                Cluster, selected_rows = self._select_random_clusters()
+            elif use_optimizations and ij_cont == 51:
+                if verbose:
+                    print("\n  >> Fase 3: Adaptive sampling (iter 51+)")
+                Cluster, selected_rows = self._select_adaptive_clusters()
+            elif use_optimizations and ij_cont > 50:
+                # OPT: Switch to adaptive sampling after warmup period
+                Cluster, selected_rows = self._select_adaptive_clusters()
+            else:
+                # Original random selection
+                Cluster, selected_rows = self._select_random_clusters()
 
             if len(Cluster) == 0:
                 # Nessun cluster selezionato, skip
@@ -229,9 +419,31 @@ class IrregularClusteringMonteCarlo:
             Ntrans = result["Ntrans"]
             Nel_active = int(np.sum(result["Lsub"]))
 
+            # OPT: Apply local search refinement to promising solutions
+            if use_optimizations and Cm < self.sim_config.Cost_thr * 2:
+                old_Cm = Cm
+                selected_rows, Cm = self._local_search(selected_rows, Cm, max_iterations=30)
+                if verbose and Cm < old_Cm:
+                    print(f"\n  >> Local search migliorato: Cm {old_Cm} -> {Cm}")
+                # OPT: Re-evaluate with refined solution
+                Cluster = self._rows_to_clusters(selected_rows)
+                if len(Cluster) > 0:
+                    result = self.array.evaluate_clustering(Cluster)
+                    Cm = result["Cm"]
+                    Ntrans = result["Ntrans"]
+                    Nel_active = int(np.sum(result["Lsub"]))
+
+            # OPT: Update adaptive scores based on solution quality
+            if use_optimizations:
+                self._update_adaptive_scores(selected_rows, Cm)
+
             self.all_Cm.append(Cm)
             self.all_Ntrans.append(Ntrans)
             self.all_Nel.append(Nel_active)
+
+            # OPT: Track best solution
+            if Cm < best_Cm_so_far:
+                best_Cm_so_far = Cm
 
             # Salva soluzione se sotto soglia
             if Cm < self.sim_config.Cost_thr:
@@ -253,6 +465,7 @@ class IrregularClusteringMonteCarlo:
                 print(f"Iterazione {ij_cont:4d} | "
                       f"Soluzioni valide: {sss:4d} | "
                       f"Ultimo Cm: {Cm:5d} | "
+                      f"Best Cm: {best_Cm_so_far:5.0f} | "  # OPT: Show best so far
                       f"Ntrans: {Ntrans:3d}")
 
         elapsed_time = time.time() - start_time

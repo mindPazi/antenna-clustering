@@ -475,23 +475,48 @@ class AntennaArray:
         """
         Ntrans = len(Lsub)
 
-        # Usa griglia spettrale
-        VV_flat = self.VV.flatten()
-        WW_flat = self.WW.flatten()
-        Fel_VW_flat = self.Fel_VW.flatten()
+        # OPT: Cache flattened arrays as class attributes to avoid repeated flattening
+        if not hasattr(self, '_VV_flat'):
+            self._VV_flat = self.VV.flatten()
+            self._WW_flat = self.WW.flatten()
+            self._Fel_VW_flat = self.Fel_VW.flatten()
+
+        VV_flat = self._VV_flat
+        WW_flat = self._WW_flat
+        Fel_VW_flat = self._Fel_VW_flat
 
         Npoints = len(VV_flat)
 
-        # KerFF_sub=zeros(Nw*Nv,Ntrans);
-        KerFF_sub = np.zeros((Npoints, Ntrans), dtype=complex)
+        # OPT: Vectorized kernel computation - replaces nested loops with matrix operations
+        # Build all valid (Y, Z) coordinates into arrays for vectorized exp computation
+        all_Y = []
+        all_Z = []
+        cluster_indices = []
 
         for kk in range(Ntrans):
             Lsub_k = int(Lsub[kk])
             for jj in range(Lsub_k):
                 if not np.isnan(Yc[jj, kk]) and not np.isnan(Zc[jj, kk]):
-                    # KerFF_sub(:,kk)=KerFF_sub(:,kk)+exp(1i*(VV(:)*Yc(jj,kk)+WW(:)*Zc(jj,kk))).*Fel_VW(:);
-                    phase = np.exp(1j * (VV_flat * Yc[jj, kk] + WW_flat * Zc[jj, kk]))
-                    KerFF_sub[:, kk] += phase * Fel_VW_flat
+                    all_Y.append(Yc[jj, kk])
+                    all_Z.append(Zc[jj, kk])
+                    cluster_indices.append(kk)
+
+        # OPT: Convert to numpy arrays for vectorized computation
+        all_Y = np.array(all_Y)
+        all_Z = np.array(all_Z)
+        cluster_indices = np.array(cluster_indices)
+
+        # OPT: Compute all phases at once using broadcasting: (Npoints, N_elements)
+        # phase[i,j] = exp(1j * (VV[i] * Y[j] + WW[i] * Z[j]))
+        phases = np.exp(1j * (np.outer(VV_flat, all_Y) + np.outer(WW_flat, all_Z)))
+
+        # OPT: Multiply by element pattern (broadcasting along columns)
+        phases = phases * Fel_VW_flat[:, np.newaxis]
+
+        # OPT: Sum contributions to each cluster using np.add.at for efficiency
+        KerFF_sub = np.zeros((Npoints, Ntrans), dtype=complex)
+        np.add.at(KerFF_sub.T, cluster_indices, phases.T)
+        KerFF_sub = KerFF_sub  # OPT: Transpose handled implicitly by add.at on transposed array
 
         # FF=KerFF_sub*c0.';
         FF = KerFF_sub @ c0.T
@@ -507,16 +532,14 @@ class AntennaArray:
         # Fopt_dB=20*log10(abs(FF_norm_2D));
         FF_norm_dB = 20 * np.log10(np.abs(FF_norm_2D) + 1e-10)
 
+        # OPT: Cache interpolation setup - avoid recomputing static grid points
+        if not hasattr(self, '_interp_points'):
+            self._interp_points = np.column_stack([WW_flat, VV_flat])
+            self._interp_xi = np.column_stack([self.WWae.flatten(), self.Vvae.flatten()])
+
         # Interpola su griglia angolare per valutazione finale
-        # Usa griddata per interpolare da (WW, VV) a (WWae, Vvae)
-        points = np.column_stack([WW_flat, VV_flat])
         values = FF_norm_dB.flatten()
-
-        WWae_flat = self.WWae.flatten()
-        Vvae_flat = self.Vvae.flatten()
-        xi = np.column_stack([WWae_flat, Vvae_flat])
-
-        FF_I_dB_flat = griddata(points, values, xi, method="linear", fill_value=-100)
+        FF_I_dB_flat = griddata(self._interp_points, values, self._interp_xi, method="linear", fill_value=-100)
         FF_I_dB = FF_I_dB_flat.reshape(self.WWae.shape)
 
         # Normalizza rispetto a G_boresight
