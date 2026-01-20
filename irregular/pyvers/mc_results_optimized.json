@@ -1,7 +1,7 @@
 {
   "algorithm": "optimized",
   "n_valid_solutions": 200,
-  "execution_time": 85.63816237449646,
+  "execution_time": 79.75357055664062,
   "statistics": {
     "all_Cm": [
       337,

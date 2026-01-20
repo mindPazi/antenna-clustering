@@ -1015,7 +1015,7 @@
     "original": {
       "algorithm": "original",
       "n_valid_solutions": 200,
-      "execution_time": 77.79065442085266,
+      "execution_time": 75.23610925674438,
       "statistics": {
         "all_Cm": [
           457,
@@ -2032,7 +2032,7 @@
     "optimized": {
       "algorithm": "optimized",
       "n_valid_solutions": 200,
-      "execution_time": 85.63816237449646,
+      "execution_time": 79.75357055664062,
       "statistics": {
         "all_Cm": [
           337,

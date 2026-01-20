@@ -27,7 +27,7 @@ from antenna_physics import (
     MaskConfig,
     ElementPatternConfig,
 )
-from antenna_clustering_GA import (
+from antenna_clustering_MC import (
     IrregularClusteringMonteCarlo,
     ClusterConfig,
     SimulationConfig,

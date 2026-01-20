@@ -1,7 +1,7 @@
 {
   "algorithm": "original",
   "n_valid_solutions": 200,
-  "execution_time": 77.79065442085266,
+  "execution_time": 75.23610925674438,
   "statistics": {
     "all_Cm": [
       457,
