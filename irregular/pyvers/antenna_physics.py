@@ -555,23 +555,26 @@ class AntennaArray:
         return FF_norm_dB, FF_I_dB, KerFF_sub, np.abs(FF_norm_2D) ** 2
 
     def compute_sll(
-        self, FF_I_dB: np.ndarray
+        self, FF_I_dB: np.ndarray, G_boresight: float = None
     ) -> Tuple[float, float]:
         """
-        Calcola SLL in/out FoV
+        Calcola SLL in/out FoV RELATIVO a G_boresight (valori NEGATIVI)
         FEDELE a SLL_in_out function
         """
-        # SLL fuori FoV
+        # Calcola G_boresight se non fornito
+        if G_boresight is None:
+            G_boresight = np.max(FF_I_dB)
+        
+        # SLL fuori FoV (relativo a G_boresight -> NEGATIVO)
         sll_out_values = FF_I_dB[self.out_fov_mask]
-        sll_out = np.max(sll_out_values) if len(sll_out_values) > 0 else -100
+        sll_out = (np.max(sll_out_values) - G_boresight) if len(sll_out_values) > 0 else -100
 
-        # SLL dentro FoV (escludendo il main beam)
+        # SLL dentro FoV (secondo massimo, relativo a G_boresight -> NEGATIVO)
         sll_in_values = FF_I_dB[self.in_fov_mask]
-        # Trova il massimo (main beam) ed escludilo
         if len(sll_in_values) > 0:
             max_val = np.max(sll_in_values)
-            # SLL è il secondo massimo o il max delle regioni laterali
-            sll_in = np.max(sll_in_values[sll_in_values < max_val - 0.1]) if np.any(sll_in_values < max_val - 0.1) else max_val
+            second_max = np.max(sll_in_values[sll_in_values < max_val - 0.1]) if np.any(sll_in_values < max_val - 0.1) else max_val
+            sll_in = second_max - G_boresight
         else:
             sll_in = -100
 
@@ -623,8 +626,11 @@ class AntennaArray:
         # Calcola cost function
         Cm = self.compute_cost_function(FF_I_dB)
 
-        # Calcola SLL
-        sll_in, sll_out = self.compute_sll(FF_I_dB)
+        # Calcola G_boresight prima di SLL
+        G_boresight = self.RPE_ele_max + 10 * np.log10(np.sum(Lsub))
+        
+        # Calcola SLL (ora relativo a G_boresight -> valori NEGATIVI)
+        sll_in, sll_out = self.compute_sll(FF_I_dB, G_boresight)
 
         # Trova massimo
         max_idx = np.unravel_index(np.argmax(FF_I_dB), FF_I_dB.shape)
@@ -636,7 +642,6 @@ class AntennaArray:
         Iazi = np.argmin(np.abs(self.azi - self.system.azi0))
 
         # Scan loss
-        G_boresight = self.RPE_ele_max + 10 * np.log10(np.sum(Lsub))
         SL_maxpointing = G_boresight - FF_I_dB[max_idx]
         SL_theta_phi = G_boresight - FF_I_dB[Iele, Iazi]
 
