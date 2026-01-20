@@ -110,9 +110,8 @@ if LAT.Ny>1
     end
 end
 
-if LAT.Ny>1
-end
-end
+% if LAT.Ny>1
+% end
 % Fel_VW_all=Fel_VW_all*ones(1,LAT.Ny);
 
 %%%%%/%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -131,10 +130,9 @@ for ij_cont=1:Niter
         disp(['Number of iteration:' num2str(ij_cont)])
         disp(['Number of generated solutions:' num2str(size(simulation,1))])
         hist(all_Ntrans)
+    else
+        CL.C_ori=[];
     end
-else
-    CL.C_ori=[];
-end
 [CL.Yc,CL.Zc,CL.Ac]= Index2Position_cluster_v2d0(CL.Cluster,LAT.Y,LAT.Z,ElementExc,LAT.NN,LAT.MM);  % Sub-array partiti
 
 %    LAT.Y(13:end,:)=-LAT.Y(13:end,:);
@@ -199,9 +197,9 @@ end
 %%%%%/%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 if EEF_mean==4
-    [FF_norm_dB, FF_I_dB, KerFF_sub, FF_norm]=Kernel1_RPE_diffrent(GCS.Nw, GCS.Nv, CL.Lsub, CL.Ac, GCS.WV, GCS.WW, GCS.WWae,
+    [FF_norm_dB, FF_I_dB, KerFF_sub, FF_norm]=Kernel1_RPE_diffrent(GCS.Nw, GCS.Nv, CL.Lsub, CL.Ac, GCS.WV, GCS.WW, GCS.WWae, Fel_VW_all, CL.Yc, CL.Zc, CL.c0, LAT.Nel);
 else
-    [FF_norm_dB, FF_I_dB, KerFF_sub, FF_norm]=Kernel1_RPE(GCS.Nw, GCS.Nv, CL.Lsub, CL.Ac, GCS.WV, GCS.WW, GCS.WWae, GCS.WWae,
+    [FF_norm_dB, FF_I_dB, KerFF_sub, FF_norm]=Kernel1_RPE(GCS.Nw, GCS.Nv, CL.Lsub, CL.Ac, GCS.WV, GCS.WW, GCS.WWae, GCS.WWae, CL.Yc, CL.Zc, CL.c0, EEF.Fel_VW, LAT.Nel);
 end
 figure
 contourf(FF_I_dB)
@@ -338,16 +336,16 @@ end
 % close all
 % [FF_I_dB_all,codebook_FF_h,codebook_FF_v,azi0,ele0,SLL_in_all,SLL_out_all,SL_h_all,SL_v_all,SL]=Codebook_2D_RPE_v3d0(LAT,SYS,
 
-hi)');
-)
-
-e0,SLL_in_all,SLL_out_all,SL]=Codebook_2D_RPE_v2d0(LAT,SYS,CL,EEF,MASK,ele_pp,azi_pp);
-
-e0,SLL_in_all,SLL_out_all,SL]=Codebook_2D_RPE_v2d0(LAT,SYS,CL,EEF,MASK,ele_pp,azi_pp);
-
-e0,SLL_in_all,SLL_out_all,SL_h_all,SL_v_all,SL]=Codebook_2D_RPE_v3d0(LAT,SYS,CL,EEF,MASK,ele_pp,azi_pp);
-
-azi_pp=-20:20:20;%-20:5:020;%:20;%0:30:30;
-ele_pp=-75:5:10;%-60:5:-55;%60;%:10:60;
+% hi)');
+% )
+%
+% e0,SLL_in_all,SLL_out_all,SL]=Codebook_2D_RPE_v2d0(LAT,SYS,CL,EEF,MASK,ele_pp,azi_pp);
+%
+% e0,SLL_in_all,SLL_out_all,SL]=Codebook_2D_RPE_v2d0(LAT,SYS,CL,EEF,MASK,ele_pp,azi_pp);
+%
+% e0,SLL_in_all,SLL_out_all,SL_h_all,SL_v_all,SL]=Codebook_2D_RPE_v3d0(LAT,SYS,CL,EEF,MASK,ele_pp,azi_pp);
+%
+% azi_pp=-20:20:20;%-20:5:020;%:20;%0:30:30;
+% ele_pp=-75:5:10;%-60:5:-55;%60;%:10:60;
 % cd 'C:\Users\100400253\Desktop\SW_ANTENNA_SYNTHESIS\IRREGULAR_ANTENNA_CLUSTERING_TOOL_SW_v3d0\AiP_pole&macro\AiP_pole\Tilted_FF
-Patch_PP
+% Patch_PP

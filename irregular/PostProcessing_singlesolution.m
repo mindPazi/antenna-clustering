@@ -46,8 +46,7 @@ half_antenna=0; % if flag=1 turn on right-half panel; % if flag=2 turn on left-h
 
 %
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%%%%%%%%%%%%%%%%%%%%%
-LOAD SIMULATED DATA                      %%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%  LOAD SIMULATED DATA  %%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 cd(folder_results)
@@ -75,7 +74,7 @@ C_ori=simulationBF.C_ori;
 %
 if save_data
     cd(save_folder)
-    diary(['label_line '_v' num2str(ele0) 'h' num2str(azi0) '.txt'])
+    diary([label_line '_v' num2str(ele0) 'h' num2str(azi0) '.txt'])
     cd(actual)
     diary on
 end
@@ -105,8 +104,8 @@ Dz=Dz+x2(2);
 %%% AZIMUT AND ELEVATION SAMPLING (for plots)
 dele=.5; % angle resolution [deg]
 dazi=.5; % angle resolution [deg]
-eles=-90:dele:90;
-azis=-90:dazi:90;
+ele=-90:dele:90;
+azi=-90:dazi:90;
 [AZI,ELE]=meshgrid(azi,ele);
 WWae=beta*cosd(90-ELE);
 Vvae=beta*sind(90-ELE).*sind(AZI);
@@ -117,36 +116,37 @@ Nw=floor(chi*4*Dz/lambda);  % Power Pattern Sampling (double)
 Nv=floor(chi*4*Dy/lambda);  % Power Pattern Sampling (double)
 
 ww=linspace(0,beta,Nw+1);
-ww=[-flipir(ww(2:end)), ww];
+ww=[-fliplr(ww(2:end)), ww];
 vv=linspace(0,beta,Nv+1);
-vv=[-flipir(vv(2:end)), vv];
+vv=[-fliplr(vv(2:end)), vv];
 [WW,VV]=meshgrid(ww,vv); % uniform sampling step in u/v coordinate
 % Equivalent azimuth and elevation positions
 % non-uniform sampling step in ele/azimuth angle
 ELEi=90-acosd(WW./beta);
-AZTi=real(asind(VV./(beta*sind(90-ELEi)))); % remove the NaN values
-AZTi(Nv+1,1:2*Nw+1)=90;
-AZTi(Nv+1,[1,2*Nw+1])=90;
+AZIi=real(asind(VV./(beta*sind(90-ELEi)))); % remove the NaN values
+AZIi(Nv+1,1:2*Nw+1)=0;
+AZIi(Nv+1,[1,2*Nw+1])=90;
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%        RPE and ARRAY FACTOR        %%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% ELEMENT FACTOR - single element radiation pattern
-[Fel, Fel_VW, RPE, RPE_ele_max] = ElementPattern_v2d0(P,Gel,ELE,AZI,AZTi,ELEi,AZTi,load_file,rpe_folder,rpe_file_name);
+[Fel, Fel_VW, RPE, RPE_ele_max] = ElementPattern_v2d0(P,Gel,ELE,AZI,ELEi,AZIi,load_file,rpe_folder,rpe_file_name);
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% MASK EVALUATION
 Nel=Nz*Ny;                                                    % number of array elements
 [Isll_in,Isll_out,Mask_1D,Mask_2D,Mask_EA]=mask_design_v2d0(Nel,Nv,Nw,vv,ww,WW,VV,WWae,Vvae,beta,ELE,AZI,elem,azim,SLL_level,RPE_ele_max);
-[Isll_in_in,Mask_2D_in,Mask_2D_in,Mask_EA_in]=mask_design_v2d0(Nel,Nv,Nw,vv,ww,WW,VV,WWae,Vvae,beta,ELE,AZI,0,0,SLlin,RPE_ele_max);
+[Isll_in_in,Isll_out_in,Mask_2D_in,Mask_EA_in]=mask_design_v2d0(Nel,Nv,Nw,vv,ww,WW,VV,WWae,Vvae,beta,ELE,AZI,0,0,SLlin,RPE_ele_max);
 
 ElementExc=ones(Nz,Ny); % Fixed array tapering [BFN]
 
 delta=0;
 elem1=0;
+vectorrow=simulation(selezionato,1:end-3);
 for ib=1:size(B,2)
-    vectrow_ib=vectrow(delta+1:delta+size(C_ori{ib},1));
-    selected_rows = find(vectrow_ib==1);
+    vectorrow_ib=vectorrow(delta+1:delta+size(C_ori{ib},1));
+    selected_rows = find(vectorrow_ib==1);
     for ic=1:size(selected_rows,2)
         elem1=elem1+1;
         Cluster{elem1}=Smod{ib}(:,2*(selected_rows(ic)-1)+1:2*(selected_rows(ic)-1)+2);
@@ -210,12 +210,12 @@ elseif half_antenna==2
     title('In rosso gli spenti')
     axis([min(min(Yc))-0.005 max(max(Yc))+0.005 min(min(Zc))-0.005 max(max(Zc))+0.005])
 
-    plot(Yc_m(quali),'sq','MarkerEdgeColor','r','MarkerSize',10);
+    plot(Yc_m(quali),Zc_m(quali),'sq','MarkerEdgeColor','r','MarkerSize',10);
 end
 
 %%% FAR FIELD TRANSFORMATION KERNELS
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-[FF_norm_dB, FF_I_dB, KerFF_sub, FF_norm]=Kernel1_RPE(Nw, Nv, Lsub, Ac, W, WW, Wae, WWae, Yc, Zc, c0, Fel_VW, Nel);
+[FF_norm_dB, FF_I_dB, KerFF_sub, FF_norm]=Kernel1_RPE(Nw, Nv, Lsub, Ac, VV, WW, Vvae, WWae, Yc, Zc, c0, Fel_VW, Nel);
 
 %%% POST PROCESSING %%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -228,7 +228,7 @@ Cm=sum(sum(Constr>0));
 [maxNum, Iazi_max] = max(maxNumCol);
 Iele_max = maxIndexCol(Iazi_max);
 theta_max =ele(Iele_max);
-phi_maxs= azi(Iazi_max);
+phi_max= azi(Iazi_max);
 theta_st =ele(Iele);
 phi_st= azi(Iazi);
 disp(' ')
@@ -238,7 +238,7 @@ disp([theta_max phi_max theta_st phi_st])
 %%%% RPE parameters
 c0=c0.';
 G_boresight=max(max(RPE))+10*log10(sum(Lsub(find(c0~=0))));
-G0=10*log10( (max abs(KerFF_sub*c0)).^2/ sum(Lsub.*abs(c0.').^2));    %[dB] % clustering with optimization
+G0=10*log10( (max(abs(KerFF_sub*c0))).^2/ sum(Lsub.*abs(c0.').^2));    %[dB] % clustering with optimization
 SL_maxpointing=G_boresight-FF_I_dB(Iele_max,Iazi_max) % scan loss in the maximum RPE beam
 SL_theta_phi=G_boresight-FF_I_dB(Iele,Iazi)               % scan loss in the desired direction
 SLL_threshold=G_boresight-SLL_level
@@ -312,7 +312,7 @@ subplot(2,2,3)
 plot(ele,FF_I_dB(:,Iazi),'b','Linewidth',2)
 hold on
 plot(ele,(Mask_EA(:,Iazi)),'g','Linewidth',2)
-axis([-90,90,-30,max(max(Mask_EA(:,Iazi)))]+0.5]);grid
+axis([-90,90,-30,max(max(Mask_EA(:,Iazi)))+0.5]);grid
 xlabel('\theta');
 ylabel('RPE R(\theta,\phi)');
 legend('RPE','Mask')
@@ -321,7 +321,7 @@ subplot(2,2,4)
 plot(azi,FF_I_dB(Iele,:),'b','Linewidth',2)
 hold on
 plot(azi,(Mask_EA(Iele,:)),'g','Linewidth',2)
-axis([-90,90,-30,max(max(Mask_EA(Iele,:)))]+0.5]);grid
+axis([-90,90,-30,max(max(Mask_EA(Iele,:)))+0.5]);grid
 xlabel('\phi');
 ylabel('RPE R(\theta,\phi)');
 legend('RPE','Mask','RPE_max')
@@ -334,10 +334,10 @@ legend('RPE','Mask','RPE_max')
 
 figure
 subplot(1,2,1)
-plot(ele,FF_I_dB(:,Izi),color_line,'Linewidth',2)
+plot(ele,FF_I_dB(:,Iazi),color_line,'Linewidth',2)
 hold on
-plot(ele,(Mask_EA(:,Izi)),'g','Linewidth',2)
-axis([-90,90,-30,max(max(Mask_EA(:,Izi)))]+0.5]);grid
+plot(ele,(Mask_EA(:,Iazi)),'g','Linewidth',2)
+axis([-90,90,-30,max(max(Mask_EA(:,Iazi)))+0.5]);grid
 xlabel('\theta');
 ylabel('RPE R(\theta,\phi)');
 legend([label_line ' \phi=' num2str(azi0) ' [◆]'],'Mask')
@@ -346,12 +346,12 @@ subplot(1,2,2)
 plot(azi,FF_I_dB(Iele,:),color_line,'Linewidth',2)
 hold on
 plot(azi,(Mask_EA(Iele,:)),'g','Linewidth',2)
-axis([-90,90,-30,max(max(Mask_EA(Iele,:)))]+0.5]);grid
+axis([-90,90,-30,max(max(Mask_EA(Iele,:)))+0.5]);grid
 xlabel('\phi');
 ylabel('RPE R(\theta,\phi)');
 legend('RPE','Mask')
 title('Horizontal plane')
-legend([label_line ' \theta=' num2str(ele0) ' [◆]'],'Mask')
+legend([label_line ' \theta=' num2str(ele0) ' [deg]'],'Mask')
 if save_data
     cd(save_folder)
     saveas(gcf,['cut_RPE_v' num2str(ele0) 'h' num2str(azi0) '.fig'])

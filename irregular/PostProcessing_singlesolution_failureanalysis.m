@@ -139,7 +139,7 @@ AZIi(Nv+1,[1,2*Nw+1])=90;
 
 Nel=Nz*Ny;          % number of array elements
 [Isll_in,Isll_out,Mask_1D,Mask_2D,Mask_EA]=mask_design_v2d0(Nel,Nv,Nw,vv,ww,WW,WV,WWae,Wvae,beta,ELE,AZI,elem,azim,SLL_level,RPE_ele_max);
-[Isll_in_in,Isll_out_in,Mask_1D_in,Mask_2D_in,Mask_EA_in]=mask_design_v2d0(Nel,Nv,Nw,vv,ww,WW,VV,WWae,Wvae,beta,ELE,AZI,0,0,SLLin
+[Isll_in_in,Isll_out_in,Mask_1D_in,Mask_2D_in,Mask_EA_in]=mask_design_v2d0(Nel,Nv,Nw,vv,ww,WW,VV,WWae,Wvae,beta,ELE,AZI,0,0,SLLin,RPE_ele_max);
 
 %%%%%/%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 vectorrow=simulation(selezionato,1:end-3);
@@ -251,12 +251,12 @@ for ij=1:size(Phase_m,1)
         plot(azi,FF_I_dB(Iele,:),col(ij,:),'Linewidth',2)
         hold on
         %         plot(azi,(Mask_EA (Iele,:)),'g','Linewidth',2)
-        axis([-90,90,-30,max(max(Mask_EA(Iele,:))))+0.5]);grid
+        axis([-90,90,-30,max(max(Mask_EA(Iele,:)))+0.5]);grid
         xlabel('\phi');
         ylabel('RPE R(\theta,\phi)');
         legend('RPE','Mask')
         title('Horizontal plane')
-        legend([label_line ' \theta=' num2str(ele0) '◆'],'Mask')
+        legend([label_line ' \theta=' num2str(ele0) ' deg'],'Mask')
         if save_data
             cd(save_folder)
             saveas(gcf,['cut_RPE_v' num2str(ele0) 'h' num2str(azi0) '.fig'])
@@ -309,3 +309,4 @@ for ij=1:size(Phase_m,1)
     if save_data
         diary off
     end
+end

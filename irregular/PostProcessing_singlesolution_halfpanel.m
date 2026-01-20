@@ -263,7 +263,7 @@ elseif half_antenne==2
     plot(azi,FF_I_dB(Iele,:),'b','Linewidth',2)
     hold on
     plot(azi,(Mask_EA (Iele,:)),'g','Linewidth',2)
-    axis([-90,90,-30,max(max(Mask_EA(Iele,:))))+0.5]);grid
+    axis([-90,90,-30,max(max(Mask_EA(Iele,:)))+0.5]);grid
     xlabel('\phi');
     ylabel('RPE R(\theta,\phi)');
     legend('RPE','Mask','RPE_max')
@@ -280,18 +280,18 @@ elseif half_antenne==2
     plot(azi,FF_I_dB(Iele,:),color_line,'Linewidth',2)
     hold on
     plot(azi,(Mask_EA (Iele,:)),'g','Linewidth',2)
-    axis([-90,90,-30,max(max(Mask_EA(Iele,:))))+0.5]);grid
+    axis([-90,90,-30,max(max(Mask_EA(Iele,:)))+0.5]);grid
     xlabel('\phi');
     ylabel('RPE R(\theta,\phi)');
     legend('RPE','Mask')
     title('Horizontal plane')
-    legend([label_line ' \theta=' num2str(ele0) '◆'],'Mask')
+    legend([label_line ' \theta=' num2str(ele0) ' deg'],'Mask')
     if save_data
         cd(save_folder)
         saveas(gcf,['cut_RPE_v' num2str(ele0) 'h' num2str(azi0) '.fig'])
     end
 
-    F_plot=FF_I_dB-30;
+    F_plot=FF_I_dB;
     F_plot(FF_I_dB<-30)=-30;
     figure
     contourf(azi, ele, F_plot)
@@ -320,8 +320,9 @@ elseif half_antenne==2
     FF_cdf_dB = FF_norm_dB;
     y_vector=FF_cdf_dB(Isll_out); % select Out of sector values
     [x_cdf y_cdf]=cdf_plot(y_vector);
-    legend(['\theta=' num2str(ele0) '◆ - \phi=' num2str(azi0) '◆ - maxCDF=' num2str(y_cdf(1)) ])
+    legend(['\theta=' num2str(ele0) ' deg - \phi=' num2str(azi0) ' deg - maxCDF=' num2str(y_cdf(1)) ])
 
     if save_data
         diary off
     end
+end

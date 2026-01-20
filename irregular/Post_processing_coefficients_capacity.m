@@ -141,7 +141,7 @@ AZIi(Nv+1,[1,2*Nw+1])=90;
 
 % number of array elements
 Nel=Nz*Ny;
-[Isll_in,Isll_out,Mask_1D,Mask_2D,Mask_EA]=mask_design_v2d0(Nel,Nv,Nw,vv,ww,WW,WV,WWae,Wvae,beta,ELE,AZI,elem,azim,SLL_level,RPE_ele_max);
+[Isll_in,Isll_out,Mask_1D,Mask_2D,Mask_EA]=mask_design_v2d0(Nel,Nv,Nw,vv,ww,WW,VV,WWae,Wvae,beta,ELE,AZI,elem,azim,SLL_level,RPE_ele_max);
 
 %%% ALGORITHM X SECTION - Sub-array definition  [B0 defines the basic structure of the sub-array]
 vectorrow=simulation(selezionato,1:end-3);
@@ -200,7 +200,7 @@ subplot(1,2,2)
 plot(azi,FF_I_dB(Iele,:),'b','LineWidth',2)
 hold on
 plot(azi,(Mask_EA (Iele,:)),'g','LineWidth',2)
-axis([-90,90,-30,max(max(Mask_EA(Iele,:))))+0.5]);grid
+axis([-90,90,-30,max(max(Mask_EA(Iele,:)))+0.5]);grid
 xlabel('\phi');
 ylabel('RPE R(\theta,\phi)');
 legend('RPE','Mask')
