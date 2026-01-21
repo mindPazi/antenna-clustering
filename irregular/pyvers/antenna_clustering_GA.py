@@ -1,16 +1,13 @@
 """
 Genetic Algorithm per ottimizzazione clustering antenna
-Usa la stessa fisica reale di antenna_physics.py (come il Monte Carlo)
+Allineato al notebook clustering_comparison.ipynb
 """
 
 import numpy as np
-import matplotlib.pyplot as plt
-from dataclasses import dataclass, field
-from typing import List, Tuple, Optional, Dict
-import json
 import time
+from dataclasses import dataclass, field
+from typing import List, Tuple, Dict
 
-# Import fisica antenna reale (stessi import del MC)
 from antenna_physics import (
     AntennaArray,
     LatticeConfig,
@@ -19,114 +16,42 @@ from antenna_physics import (
     ElementPatternConfig,
 )
 
-
-@dataclass
-class ClusterConfig:
-    """Configurazione cluster - come nel MC"""
-    Cluster_type: List[np.ndarray] = field(default_factory=list)
-    rotation_cluster: int = 0
-
-    def __post_init__(self):
-        if not self.Cluster_type:
-            self.Cluster_type = [np.array([[0, 0], [0, 1]])]
+from antenna_clustering_MC import (
+    ClusterConfig,
+    FullSubarraySetGeneration,
+)
 
 
 @dataclass
 class GAParams:
     """Parametri Genetic Algorithm"""
-    population_size: int = 50
-    max_generations: int = 25
+    population_size: int = 20
+    max_generations: int = 15
     mutation_rate: float = 0.15
     crossover_rate: float = 0.8
-    elite_size: int = 5
+    elite_size: int = 3
 
 
-class FullSubarraySetGeneration:
+class GeneticAlgorithmOptimizer:
     """
-    Genera il set completo di subarray possibili
-    IDENTICO a quello nel MC (antenna_clustering_MC.py)
-    """
-
-    def __init__(
-        self,
-        cluster_type: np.ndarray,
-        lattice: LatticeConfig,
-        NN: np.ndarray,
-        MM: np.ndarray,
-        rotation_cluster: int = 0,
-    ):
-        self.cluster_type = np.atleast_2d(cluster_type)
-        self.lattice = lattice
-        self.NN = NN
-        self.MM = MM
-        self.rotation_cluster = rotation_cluster
-        self.S, self.Nsub = self._generate()
-
-    def _generate(self) -> Tuple[List[np.ndarray], int]:
-        """Genera tutte le posizioni possibili per il tipo di cluster"""
-        B = self.cluster_type
-        A = np.sum(B, axis=0)
-        M = self.MM.flatten()
-        N = self.NN.flatten()
-
-        if A[0] == 0:
-            step_M = B.shape[0]
-            step_N = 1
-        elif A[1] == 0:
-            step_N = B.shape[0]
-            step_M = 1
-        else:
-            step_M = 1
-            step_N = 1
-
-        S = []
-        min_M, max_M = int(np.min(M)), int(np.max(M))
-        min_N, max_N = int(np.min(N)), int(np.max(N))
-
-        for kk in range(min_M, max_M + 1, step_M):
-            for hh in range(min_N, max_N + 1, step_N):
-                Bshift = B.copy()
-                Bshift[:, 0] = B[:, 0] + hh
-                Bshift[:, 1] = B[:, 1] + kk
-
-                check = not np.any(
-                    (Bshift[:, 0] > max_N) | (Bshift[:, 0] < min_N) |
-                    (Bshift[:, 1] > max_M) | (Bshift[:, 1] < min_M)
-                )
-
-                if check:
-                    S.append(Bshift)
-
-        return S, len(S)
-
-
-class GeneticAlgorithm:
-    """
-    Algoritmo Genetico per ottimizzazione clustering.
-    Usa la stessa fisica reale del Monte Carlo (evaluate_clustering).
+    Algoritmo Genetico per ottimizzazione clustering - INDIPENDENTE dal MC.
+    Genera i propri subarrays e usa fisica reale.
     """
 
-    def __init__(
-        self,
-        array: AntennaArray,
-        cluster_config: ClusterConfig,
-        ga_params: GAParams,
-    ):
+    def __init__(self, array: AntennaArray, cluster_config: ClusterConfig,
+                 ga_params: GAParams):
         self.array = array
         self.cluster_config = cluster_config
         self.params = ga_params
 
-        # Genera subarrays (IDENTICO al MC)
-        self.S_all = []
-        self.N_all = []
+        # Genera subarrays (come fa il MC)
+        self.S_all = []  # Lista di liste di subarrays
+        self.N_all = []  # Numero subarrays per tipo
 
         for cluster_type in cluster_config.Cluster_type:
             gen = FullSubarraySetGeneration(
-                cluster_type,
-                array.lattice,
-                array.NN,
-                array.MM,
-                cluster_config.rotation_cluster,
+                cluster_type, array.lattice, array.NN, array.MM,
+                cluster_config.rotation_cluster
             )
             self.S_all.append(gen.S)
             self.N_all.append(gen.Nsub)
@@ -154,39 +79,30 @@ class GeneticAlgorithm:
         print(f"GA inizializzato: {self.total_clusters} subarrays disponibili")
 
     def _create_random_genes(self) -> np.ndarray:
-        """Crea un cromosoma random (array binario)"""
+        """Crea un cromosoma random"""
         return np.random.randint(0, 2, size=self.total_clusters)
 
-    def _genes_to_clusters(self, genes: np.ndarray) -> List[np.ndarray]:
-        """Converte genes (array binario) in lista di cluster"""
-        return [self.all_subarrays[i] for i in range(len(genes)) if genes[i] == 1]
-
     def _evaluate_genes(self, genes: np.ndarray) -> Dict:
-        """
-        Valuta un cromosoma usando fisica reale.
-        USA evaluate_clustering() come il MC!
-        """
-        Cluster = self._genes_to_clusters(genes)
+        """Valuta un cromosoma usando fisica reale"""
+        # Seleziona cluster attivi
+        Cluster = [self.all_subarrays[i] for i in range(len(genes)) if genes[i] == 1]
 
         if len(Cluster) == 0:
             return {
-                "valid": False,
-                "fitness": -10000,
-                "Cm": 99999,
-                "sll_out": 0,
-                "sll_in": 0,
-                "n_clusters": 0,
+                "valid": False, "fitness": -10000,
+                "Cm": 99999, "sll_out": 0, "sll_in": 0, "n_clusters": 0
             }
 
-        # Usa fisica reale (IDENTICO al MC)
+        # Usa fisica reale
         result = self.array.evaluate_clustering(Cluster)
 
+        # Fitness: minimizza Cm (cost function) + penalità hardware
         Cm = result["Cm"]
         n_clusters = result["Ntrans"]
-        
-        # Fitness: minimizza Cm + penalita hardware
         hardware_penalty = (n_clusters / self.array.Nel) * 50
-        fitness = -Cm - hardware_penalty  # Negativo perche GA massimizza
+
+        # Fitness negativo perché GA massimizza
+        fitness = -Cm - hardware_penalty
 
         return {
             "valid": True,
@@ -227,17 +143,16 @@ class GeneticAlgorithm:
 
     def _mutate(self, genes: np.ndarray) -> np.ndarray:
         """Mutazione bit flip"""
-        genes = genes.copy()
         mask = np.random.random(self.total_clusters) < self.params.mutation_rate
         genes[mask] = 1 - genes[mask]
         return genes
 
     def _calculate_diversity(self) -> float:
-        """Calcola diversita genetica"""
+        """Calcola diversità genetica"""
         genes_matrix = np.array([ind["genes"] for ind in self.population])
         return np.mean(np.std(genes_matrix, axis=0))
 
-    def run(self, verbose: bool = True) -> Dict:
+    def run(self, verbose=True):
         """Esegui GA"""
         if verbose:
             print(f"\n{'='*60}")
@@ -293,7 +208,7 @@ class GeneticAlgorithm:
                 recent = self.history["best_Cm"][-5:]
                 if max(recent) - min(recent) < 5:
                     if verbose:
-                        print(f"\nConvergenza alla generazione {generation+1}")
+                        print(f"\n[OK] Convergenza alla generazione {generation+1}")
                     break
 
             # Nuova generazione
@@ -343,100 +258,35 @@ class GeneticAlgorithm:
             print(f"Tempo totale: {self.elapsed_time:.1f}s")
             print(f"{'='*60}\n")
 
-        return {
-            "best": self.best_individual,
-            "history": self.history,
-            "elapsed_time": self.elapsed_time,
-        }
-
-    def save_results(self, filename: str = "ga_results.json"):
-        """Salva risultati in JSON"""
-        results = {
-            "config": {
-                "Nz": self.array.lattice.Nz,
-                "Ny": self.array.lattice.Ny,
-                "freq_GHz": self.array.system.freq / 1e9,
-            },
-            "ga_params": {
-                "population_size": self.params.population_size,
-                "max_generations": self.params.max_generations,
-                "mutation_rate": self.params.mutation_rate,
-            },
-            "best_solution": {
-                "Cm": int(self.best_individual["Cm"]),
-                "sll_out": float(self.best_individual["sll_out"]),
-                "sll_in": float(self.best_individual["sll_in"]),
-                "n_clusters": int(self.best_individual["n_clusters"]),
-                "fitness": float(self.best_individual["fitness"]),
-            },
-            "history": {
-                k: [float(v) for v in vals] for k, vals in self.history.items()
-            },
-        }
-
-        with open(filename, "w") as f:
-            json.dump(results, f, indent=2)
-        print(f"Risultati salvati in {filename}")
+        return self.best_individual
 
 
 def main():
-    """Esegui ottimizzazione GA"""
-    # Configurazione (IDENTICA al MC)
-    lattice = LatticeConfig(
-        Nz=16,
-        Ny=16,
-        dist_z=0.6,
-        dist_y=0.53,
-        lattice_type=1,
-    )
-
-    system = SystemConfig(
-        freq=29.5e9,
-        azi0=0,
-        ele0=0,
-        dele=0.5,
-        dazi=0.5,
-    )
-
-    mask = MaskConfig(
-        elem=30,
-        azim=60,
-        SLL_level=20,
-        SLLin=15,
-    )
-
-    eef = ElementPatternConfig(
-        P=1,
-        Gel=5,
-        load_file=0,
-    )
-
-    cluster_config = ClusterConfig(
-        Cluster_type=[np.array([[0, 0], [0, 1]])],
-        rotation_cluster=0,
-    )
+    """Esegui ottimizzazione Genetic Algorithm"""
+    lattice = LatticeConfig(Nz=16, Ny=16, dist_z=0.6, dist_y=0.53, lattice_type=1)
+    system = SystemConfig(freq=29.5e9, azi0=0, ele0=0, dele=0.5, dazi=0.5)
+    mask = MaskConfig(elem=30, azim=60, SLL_level=20, SLLin=15)
+    eef = ElementPatternConfig(P=1, Gel=5, load_file=0)
+    cluster_config = ClusterConfig(Cluster_type=[np.array([[0, 0], [0, 1]])], rotation_cluster=0)
 
     ga_params = GAParams(
-        population_size=20,
-        max_generations=15,
+        population_size=15,
+        max_generations=10,
         mutation_rate=0.15,
         crossover_rate=0.8,
-        elite_size=3,
+        elite_size=2,
     )
 
-    # Crea array
     print("Inizializzando array antenna...")
     array = AntennaArray(lattice, system, mask, eef)
 
-    # Crea e esegui GA
-    ga = GeneticAlgorithm(array, cluster_config, ga_params)
-    results = ga.run(verbose=True)
+    ga_optimizer = GeneticAlgorithmOptimizer(array, cluster_config, ga_params)
+    best_ga = ga_optimizer.run(verbose=True)
 
-    # Salva risultati
-    ga.save_results("ga_results.json")
+    print(f"\nGA completato in {ga_optimizer.elapsed_time:.1f}s")
 
-    return ga
+    return ga_optimizer
 
 
 if __name__ == "__main__":
-    ga = main()
+    ga_optimizer = main()
