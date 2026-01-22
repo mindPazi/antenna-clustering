@@ -1,6 +1,6 @@
 """
-Funzioni di plotting per risultati Genetic Algorithm
-Allineato al notebook clustering_comparison.ipynb
+Plotting functions for Genetic Algorithm results
+Aligned with clustering_comparison.ipynb notebook
 """
 
 import numpy as np
@@ -12,7 +12,7 @@ from plot_results_mc import extract_lobe_metrics
 
 
 def plot_ga_results(ga_optimizer):
-    """Plot risultati Genetic Algorithm - versione completa"""
+    """Plot Genetic Algorithm results - complete version"""
     history = ga_optimizer.history
     best = ga_optimizer.best_individual
 
@@ -60,7 +60,7 @@ def plot_ga_results(ga_optimizer):
     ax4.set_title('Hardware Complexity', fontsize=12, fontweight='bold')
     ax4.grid(True, alpha=0.3)
 
-    # 5. Diversita Popolazione
+    # 5. Population Diversity
     ax5 = fig.add_subplot(gs[2, 0])
     ax5.plot(generations, history['diversity'], 'orange', linewidth=2.5)
     ax5.set_xlabel('Generation', fontsize=11, fontweight='bold')
@@ -104,5 +104,5 @@ def plot_ga_results(ga_optimizer):
                  fontsize=16, fontweight='bold', y=0.995)
 
     plt.savefig('GA_optimization_results.png', dpi=300, bbox_inches='tight')
-    print("Grafici salvati in 'GA_optimization_results.png'")
+    print("Plots saved to 'GA_optimization_results.png'")
     plt.show()

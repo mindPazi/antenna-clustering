@@ -1,6 +1,6 @@
 """
-Funzioni di plotting per risultati clustering antenna
-Allineato al notebook clustering_comparison.ipynb
+Plotting functions for antenna clustering results
+Aligned with clustering_comparison.ipynb notebook
 """
 
 import numpy as np
@@ -13,36 +13,36 @@ from antenna_physics import AntennaArray
 
 
 def plot_mc_results(results_original, results_optimized):
-    """Plot risultati Monte Carlo"""
+    """Plot Monte Carlo results"""
     fig, axes = plt.subplots(1, 3, figsize=(15, 4))
     fig.suptitle('Monte Carlo Results', fontsize=14, fontweight='bold')
 
     # Cost function evolution
-    axes[0].plot(results_original['all_Cm'], 'b-', alpha=0.7, label='Originale')
-    axes[0].plot(results_optimized['all_Cm'], 'r-', alpha=0.7, label='Ottimizzato')
-    axes[0].set_xlabel('Iterazione')
+    axes[0].plot(results_original['all_Cm'], 'b-', alpha=0.7, label='Original')
+    axes[0].plot(results_optimized['all_Cm'], 'r-', alpha=0.7, label='Optimized')
+    axes[0].set_xlabel('Iteration')
     axes[0].set_ylabel('Cost Function (Cm)')
-    axes[0].set_title('Evoluzione Cost Function')
+    axes[0].set_title('Cost Function Evolution')
     axes[0].legend()
     axes[0].grid(True, alpha=0.3)
 
     # Histogram
     cm_orig = [c for c in results_original['all_Cm'] if c != float('inf') and c < 5000]
     cm_opt = [c for c in results_optimized['all_Cm'] if c != float('inf') and c < 5000]
-    axes[1].hist(cm_orig, bins=30, alpha=0.5, label='Originale', color='blue')
-    axes[1].hist(cm_opt, bins=30, alpha=0.5, label='Ottimizzato', color='red')
+    axes[1].hist(cm_orig, bins=30, alpha=0.5, label='Original', color='blue')
+    axes[1].hist(cm_opt, bins=30, alpha=0.5, label='Optimized', color='red')
     axes[1].set_xlabel('Cost Function (Cm)')
-    axes[1].set_ylabel('Frequenza')
-    axes[1].set_title('Distribuzione Cost Function')
+    axes[1].set_ylabel('Frequency')
+    axes[1].set_title('Cost Function Distribution')
     axes[1].legend()
     axes[1].grid(True, alpha=0.3)
 
     # Clusters
-    axes[2].plot(results_original['all_Ntrans'], 'b-', alpha=0.7, label='Originale')
-    axes[2].plot(results_optimized['all_Ntrans'], 'r-', alpha=0.7, label='Ottimizzato')
-    axes[2].set_xlabel('Iterazione')
-    axes[2].set_ylabel('Numero Cluster')
-    axes[2].set_title('Numero di Cluster')
+    axes[2].plot(results_original['all_Ntrans'], 'b-', alpha=0.7, label='Original')
+    axes[2].plot(results_optimized['all_Ntrans'], 'r-', alpha=0.7, label='Optimized')
+    axes[2].set_xlabel('Iteration')
+    axes[2].set_ylabel('Number of Clusters')
+    axes[2].set_title('Number of Clusters')
     axes[2].legend()
     axes[2].grid(True, alpha=0.3)
 
@@ -236,7 +236,7 @@ def plot_lobe_analysis(FF_I_dB, antenna_array, G_boresight=None,
 
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        print(f"Plot salvato in {save_path}")
+        print(f"Plot saved to {save_path}")
 
     plt.show()
     return metrics
@@ -358,14 +358,14 @@ def plot_lobe_comparison(results_list, labels, antenna_array, save_path=None):
 
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        print(f"Plot salvato in {save_path}")
+        print(f"Plot saved to {save_path}")
 
     plt.show()
     return all_metrics
 
 
 def rows_to_clusters(selected_rows, optimizer):
-    """Converte selected_rows in lista Cluster usando i dati dell'optimizer"""
+    """Convert selected_rows to Cluster list using optimizer data"""
     clusters = []
     offset = 0
     for bb, S in enumerate(optimizer.S_all):
@@ -378,7 +378,7 @@ def rows_to_clusters(selected_rows, optimizer):
 
 
 def genes_to_clusters(genes, ga_optimizer):
-    """Converte genes (GA) in lista Cluster usando i dati del GA optimizer"""
+    """Convert genes (GA) to Cluster list using GA optimizer data"""
     clusters = []
     offset = 0
     for bb, S in enumerate(ga_optimizer.S_all):
@@ -391,7 +391,7 @@ def genes_to_clusters(genes, ga_optimizer):
 
 
 def get_ff_i_db_mc(solution, antenna_array, optimizer):
-    """Ottieni FF_I_dB da una soluzione MC"""
+    """Get FF_I_dB from a MC solution"""
     if 'FF_I_dB' in solution:
         return solution['FF_I_dB'], solution.get('G_boresight')
 
@@ -405,7 +405,7 @@ def get_ff_i_db_mc(solution, antenna_array, optimizer):
 
 
 def get_ff_i_db_ga(solution, antenna_array, ga_opt):
-    """Ottieni FF_I_dB da una soluzione GA"""
+    """Get FF_I_dB from a GA solution"""
     if 'FF_I_dB' in solution:
         return solution['FF_I_dB'], solution.get('G_boresight')
 

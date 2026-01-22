@@ -1,6 +1,6 @@
 """
-Ottimizzazione clustering antenna - Monte Carlo
-Allineato al notebook clustering_comparison.ipynb
+Antenna clustering optimization - Monte Carlo
+Aligned with clustering_comparison.ipynb notebook
 """
 
 import numpy as np
@@ -19,15 +19,15 @@ from antenna_physics import (
 
 @dataclass
 class SimulationConfig:
-    """Parametri simulazione"""
+    """Simulation parameters"""
     Niter: int = 1000
     Cost_thr: int = 1000
-    random_seed: int = None  # FIX: per riproducibilità
+    random_seed: int = None  # FIX: for reproducibility
 
 
 @dataclass
 class ClusterConfig:
-    """Configurazione cluster"""
+    """Cluster configuration"""
     Cluster_type: List[np.ndarray] = field(default_factory=list)
     rotation_cluster: int = 0
 
@@ -37,7 +37,7 @@ class ClusterConfig:
 
 
 class FullSubarraySetGeneration:
-    """Genera il set completo di subarray possibili"""
+    """Generate the complete set of possible subarrays"""
 
     def __init__(self, cluster_type: np.ndarray, lattice: LatticeConfig,
                  NN: np.ndarray, MM: np.ndarray, rotation_cluster: int = 0):
@@ -86,7 +86,7 @@ class FullSubarraySetGeneration:
 
 
 class IrregularClusteringMonteCarlo:
-    """Ottimizzazione clustering con approccio Monte Carlo + ottimizzazioni"""
+    """Clustering optimization with Monte Carlo approach + optimizations"""
 
     def __init__(self, array: AntennaArray, cluster_config: ClusterConfig,
                  sim_config: SimulationConfig):
@@ -118,7 +118,7 @@ class IrregularClusteringMonteCarlo:
         self._selection_counts = np.ones(self.total_clusters)
 
     def _select_random_clusters(self):
-        """Selezione random originale (probabilità 50%)"""
+        """Original random selection (50% probability)"""
         selected_clusters = []
         selected_rows = []
 
@@ -132,7 +132,7 @@ class IrregularClusteringMonteCarlo:
         return selected_clusters, np.concatenate(selected_rows)
 
     def _select_adaptive_clusters(self):
-        """OPT: Selezione con probabilità adattiva"""
+        """OPT: Selection with adaptive probability"""
         selected_clusters = []
         selected_rows = []
 
@@ -152,11 +152,11 @@ class IrregularClusteringMonteCarlo:
         return selected_clusters, np.concatenate(selected_rows)
 
     def _update_adaptive_scores(self, selected_rows: np.ndarray, Cm: int):
-        """OPT: Aggiorna score adattivi.
+        """OPT: Update adaptive scores.
 
-        FIX: Usa scaling esponenziale invece di cutoff.
-        Prima: reward = max(0, Cost_thr - Cm) -> sempre 0 se Cm > Cost_thr
-        Ora: reward = exp(-Cm/Cost_thr) -> sempre > 0, impara anche da soluzioni cattive
+        FIX: Use exponential scaling instead of cutoff.
+        Before: reward = max(0, Cost_thr - Cm) -> always 0 if Cm > Cost_thr
+        Now: reward = exp(-Cm/Cost_thr) -> always > 0, learns from bad solutions too
         """
         normalized_cm = Cm / self.sim_config.Cost_thr
         reward = np.exp(-normalized_cm)  # Range [0, 1], mai zero
@@ -166,7 +166,7 @@ class IrregularClusteringMonteCarlo:
         self._selection_counts[indices] += 1
 
     def _greedy_initialization(self, max_clusters: int = None):
-        """OPT: Inizializzazione greedy"""
+        """OPT: Greedy initialization"""
         if max_clusters is None:
             max_clusters = self.total_clusters // 2
 
@@ -210,7 +210,7 @@ class IrregularClusteringMonteCarlo:
         return selected_clusters, selected_rows
 
     def _rows_to_clusters(self, selected_rows: np.ndarray):
-        """OPT: Converte array selezione in lista cluster"""
+        """OPT: Convert selection array to cluster list"""
         clusters = []
         offset = 0
         for bb, S in enumerate(self.S_all):
@@ -223,7 +223,7 @@ class IrregularClusteringMonteCarlo:
 
     def _local_search(self, selected_rows: np.ndarray, current_Cm: int,
                       max_iterations: int = 10):
-        """OPT: Local search per raffinamento (reduced from 50 to 10 for speed)"""
+        """OPT: Local search for refinement (reduced from 50 to 10 for speed)"""
         best_rows = selected_rows.copy()
         best_Cm = current_Cm
 
@@ -254,8 +254,8 @@ class IrregularClusteringMonteCarlo:
         return best_rows, best_Cm
 
     def run(self, verbose: bool = True, use_optimizations: bool = True) -> Dict:
-        """Esegue ottimizzazione"""
-        # FIX: Applica seed per riproducibilità
+        """Execute optimization"""
+        # FIX: Apply seed for reproducibility
         if self.sim_config.random_seed is not None:
             np.random.seed(self.sim_config.random_seed)
 
@@ -269,8 +269,8 @@ class IrregularClusteringMonteCarlo:
             else:
                 print("  [ORIGINAL MODE: random sampling only]")
             print("=" * 60)
-            print(f"Array: {self.array.lattice.Nz}x{self.array.lattice.Ny} = {self.array.Nel} elementi")
-            print(f"Iterazioni: {self.sim_config.Niter}")
+            print(f"Array: {self.array.lattice.Nz}x{self.array.lattice.Ny} = {self.array.Nel} elements")
+            print(f"Iterations: {self.sim_config.Niter}")
             print("=" * 60)
 
         sss = 0
@@ -280,22 +280,22 @@ class IrregularClusteringMonteCarlo:
             # Progress bar
             if verbose and ij_cont % 10 == 0:
                 pct = (ij_cont / self.sim_config.Niter) * 100
-                print(f"  [Progresso: {ij_cont}/{self.sim_config.Niter} ({pct:.0f}%) | Best Cm: {best_Cm_so_far:.0f}]", end="\r")
+                print(f"  [Progress: {ij_cont}/{self.sim_config.Niter} ({pct:.0f}%) | Best Cm: {best_Cm_so_far:.0f}]", end="\r")
 
-            # Selezione cluster
-            # FIX: Logica pulita senza rami ridondanti
+            # Cluster selection
+            # FIX: Clean logic without redundant branches
             if use_optimizations:
                 if ij_cont <= 10:
                     if verbose and ij_cont == 1:
-                        print("  >> Fase 1: Greedy initialization (iter 1-10)")
+                        print("  >> Phase 1: Greedy initialization (iter 1-10)")
                     Cluster, selected_rows = self._greedy_initialization()
                 elif ij_cont <= 50:
                     if verbose and ij_cont == 11:
-                        print("\n  >> Fase 2: Random sampling (iter 11-50)")
+                        print("\n  >> Phase 2: Random sampling (iter 11-50)")
                     Cluster, selected_rows = self._select_random_clusters()
                 else:  # ij_cont > 50
                     if verbose and ij_cont == 51:
-                        print("\n  >> Fase 3: Adaptive sampling (iter 51+)")
+                        print("\n  >> Phase 3: Adaptive sampling (iter 51+)")
                     Cluster, selected_rows = self._select_adaptive_clusters()
             else:
                 Cluster, selected_rows = self._select_random_clusters()
@@ -352,15 +352,15 @@ class IrregularClusteringMonteCarlo:
         if verbose:
             print("\n")
             print("=" * 60)
-            print("RISULTATI")
+            print("RESULTS")
             print("=" * 60)
-            print(f"Iterazioni: {self.sim_config.Niter}")
-            print(f"Soluzioni valide: {len(self.simulation)}")
-            print(f"Tempo: {elapsed_time:.2f} s")
+            print(f"Iterations: {self.sim_config.Niter}")
+            print(f"Valid solutions: {len(self.simulation)}")
+            print(f"Time: {elapsed_time:.2f} s")
 
             if self.simulation:
                 best_sol = min(self.simulation, key=lambda x: x["Cm"])
-                print(f"\nMIGLIORE SOLUZIONE:")
+                print(f"\nBEST SOLUTION:")
                 print(f"  Cm: {best_sol['Cm']}")
                 print(f"  Ntrans: {best_sol['Ntrans']}")
                 print(f"  Nel: {best_sol['Nel']}")
@@ -378,7 +378,7 @@ class IrregularClusteringMonteCarlo:
 
 
 def main():
-    """Esegui ottimizzazione Monte Carlo"""
+    """Execute Monte Carlo optimization"""
     lattice = LatticeConfig(Nz=16, Ny=16, dist_z=0.6, dist_y=0.53, lattice_type=1)
     system = SystemConfig(freq=29.5e9, azi0=0, ele0=0, dele=0.5, dazi=0.5)
     mask = MaskConfig(elem=30, azim=60, SLL_level=20, SLLin=15)
@@ -386,7 +386,7 @@ def main():
     cluster_config = ClusterConfig(Cluster_type=[np.array([[0, 0], [0, 1]])], rotation_cluster=0)
     sim_config = SimulationConfig(Niter=1000, Cost_thr=1000)
 
-    print("Inizializzando array antenna...")
+    print("Initializing antenna array...")
     array = AntennaArray(lattice, system, mask, eef)
 
     optimizer = IrregularClusteringMonteCarlo(array, cluster_config, sim_config)

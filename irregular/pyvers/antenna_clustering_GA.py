@@ -1,6 +1,6 @@
 """
-Genetic Algorithm per ottimizzazione clustering antenna
-Allineato al notebook clustering_comparison.ipynb
+Genetic Algorithm for antenna clustering optimization
+Aligned with clustering_comparison.ipynb notebook
 """
 
 import numpy as np
@@ -24,19 +24,19 @@ from antenna_clustering_MC import (
 
 @dataclass
 class GAParams:
-    """Parametri Genetic Algorithm"""
-    population_size: int = 50   # FIX: aumentato da 20 per migliore convergenza
-    max_generations: int = 100  # FIX: aumentato da 15 per migliore convergenza
+    """Genetic Algorithm parameters"""
+    population_size: int = 50   # FIX: increased from 20 for better convergence
+    max_generations: int = 100  # FIX: increased from 15 for better convergence
     mutation_rate: float = 0.15
     crossover_rate: float = 0.8
-    elite_size: int = 5         # FIX: aumentato da 3
-    random_seed: int = None     # FIX: per riproducibilità
+    elite_size: int = 5         # FIX: increased from 3
+    random_seed: int = None     # FIX: for reproducibility
 
 
 class GeneticAlgorithmOptimizer:
     """
-    Algoritmo Genetico per ottimizzazione clustering - INDIPENDENTE dal MC.
-    Genera i propri subarrays e usa fisica reale.
+    Genetic Algorithm for clustering optimization - INDEPENDENT from MC.
+    Generates its own subarrays and uses real physics.
     """
 
     def __init__(self, array: AntennaArray, cluster_config: ClusterConfig,
@@ -77,15 +77,15 @@ class GeneticAlgorithmOptimizer:
             "diversity": [],
         }
 
-        print(f"GA inizializzato: {self.total_clusters} subarrays disponibili")
+        print(f"GA initialized: {self.total_clusters} subarrays available")
 
     def _create_random_genes(self) -> np.ndarray:
-        """Crea un cromosoma random"""
+        """Create a random chromosome"""
         return np.random.randint(0, 2, size=self.total_clusters)
 
     def _evaluate_genes(self, genes: np.ndarray) -> Dict:
-        """Valuta un cromosoma usando fisica reale"""
-        # Seleziona cluster attivi
+        """Evaluate a chromosome using real physics"""
+        # Select active clusters
         Cluster = [self.all_subarrays[i] for i in range(len(genes)) if genes[i] == 1]
 
         if len(Cluster) == 0:
@@ -94,15 +94,15 @@ class GeneticAlgorithmOptimizer:
                 "Cm": 99999, "sll_out": 0, "sll_in": 0, "n_clusters": 0
             }
 
-        # Usa fisica reale
+        # Use real physics
         result = self.array.evaluate_clustering(Cluster)
 
-        # Fitness: minimizza Cm (cost function) + penalità hardware
+        # Fitness: minimize Cm (cost function) + hardware penalty
         Cm = result["Cm"]
         n_clusters = result["Ntrans"]
         hardware_penalty = (n_clusters / self.array.Nel) * 50
 
-        # Fitness negativo perché GA massimizza
+        # Negative fitness because GA maximizes
         fitness = -Cm - hardware_penalty
 
         return {
@@ -115,7 +115,7 @@ class GeneticAlgorithmOptimizer:
         }
 
     def initialize_population(self):
-        """Crea popolazione iniziale"""
+        """Create initial population"""
         self.population = []
         for _ in range(self.params.population_size):
             genes = self._create_random_genes()
@@ -130,36 +130,36 @@ class GeneticAlgorithmOptimizer:
             })
 
     def _tournament_selection(self, tournament_size: int = 3) -> Dict:
-        """Selezione per torneo"""
+        """Tournament selection"""
         contestants = np.random.choice(len(self.population), tournament_size, replace=False)
         winner_idx = max(contestants, key=lambda i: self.population[i]["fitness"])
         return self.population[winner_idx].copy()
 
     def _crossover(self, parent1: Dict, parent2: Dict) -> Tuple[np.ndarray, np.ndarray]:
-        """Crossover uniforme"""
+        """Uniform crossover"""
         mask = np.random.randint(0, 2, size=self.total_clusters)
         child1_genes = np.where(mask, parent1["genes"], parent2["genes"])
         child2_genes = np.where(mask, parent2["genes"], parent1["genes"])
         return child1_genes, child2_genes
 
     def _mutate(self, genes: np.ndarray) -> np.ndarray:
-        """Mutazione bit flip.
+        """Bit flip mutation.
 
-        FIX: Copia l'array prima di modificarlo per evitare side effects.
+        FIX: Copy the array before modifying to avoid side effects.
         """
-        genes = genes.copy()  # FIX: evita modifica in-place
+        genes = genes.copy()  # FIX: avoid in-place modification
         mask = np.random.random(self.total_clusters) < self.params.mutation_rate
         genes[mask] = 1 - genes[mask]
         return genes
 
     def _calculate_diversity(self) -> float:
-        """Calcola diversità genetica"""
+        """Calculate genetic diversity"""
         genes_matrix = np.array([ind["genes"] for ind in self.population])
         return np.mean(np.std(genes_matrix, axis=0))
 
     def run(self, verbose=True):
-        """Esegui GA"""
-        # FIX: Applica seed per riproducibilità
+        """Execute GA"""
+        # FIX: Apply seed for reproducibility
         if self.params.random_seed is not None:
             np.random.seed(self.params.random_seed)
 
@@ -167,32 +167,32 @@ class GeneticAlgorithmOptimizer:
             print(f"\n{'='*60}")
             print(f"GENETIC ALGORITHM - ANTENNA CLUSTERING")
             print(f"{'='*60}")
-            print(f"Array: {self.array.lattice.Nz}x{self.array.lattice.Ny} elementi")
-            print(f"Subarrays disponibili: {self.total_clusters}")
-            print(f"Popolazione: {self.params.population_size}")
-            print(f"Generazioni: {self.params.max_generations}")
+            print(f"Array: {self.array.lattice.Nz}x{self.array.lattice.Ny} elements")
+            print(f"Available subarrays: {self.total_clusters}")
+            print(f"Population: {self.params.population_size}")
+            print(f"Generations: {self.params.max_generations}")
             print(f"{'='*60}\n")
 
         start_time = time.time()
 
-        # Inizializzazione
+        # Initialization
         if verbose:
-            print("Inizializzazione popolazione...")
+            print("Initializing population...")
         self.initialize_population()
         if verbose:
-            print(f"   Completata in {time.time() - start_time:.1f}s\n")
+            print(f"   Completed in {time.time() - start_time:.1f}s\n")
 
-        # Evoluzione
+        # Evolution
         for generation in range(self.params.max_generations):
             gen_start = time.time()
 
-            # Ordina per fitness
+            # Sort by fitness
             self.population.sort(key=lambda x: x["fitness"], reverse=True)
             best = self.population[0]
             avg_fitness = np.mean([ind["fitness"] for ind in self.population])
             diversity = self._calculate_diversity()
 
-            # Salva storia
+            # Save history
             self.history["best_fitness"].append(best["fitness"])
             self.history["avg_fitness"].append(avg_fitness)
             self.history["best_Cm"].append(best["Cm"])
@@ -217,10 +217,10 @@ class GeneticAlgorithmOptimizer:
                 recent = self.history["best_Cm"][-5:]
                 if max(recent) - min(recent) < 5:
                     if verbose:
-                        print(f"\n[OK] Convergenza alla generazione {generation+1}")
+                        print(f"\n[OK] Convergence at generation {generation+1}")
                     break
 
-            # Nuova generazione
+            # New generation
             elite = self.population[:self.params.elite_size]
             new_population = [e.copy() for e in elite]
 
@@ -251,27 +251,27 @@ class GeneticAlgorithmOptimizer:
 
             self.population = new_population
 
-        # Risultato finale
+        # Final result
         self.population.sort(key=lambda x: x["fitness"], reverse=True)
         self.best_individual = self.population[0]
         self.elapsed_time = time.time() - start_time
 
         if verbose:
             print(f"\n{'='*60}")
-            print(f"RISULTATO FINALE GA")
+            print(f"FINAL GA RESULT")
             print(f"{'='*60}")
             print(f"Cost Function (Cm): {self.best_individual['Cm']}")
-            print(f"SLL fuori FoV: {self.best_individual['sll_out']:.2f} dB")
-            print(f"SLL dentro FoV: {self.best_individual['sll_in']:.2f} dB")
-            print(f"Numero cluster: {self.best_individual['n_clusters']}")
-            print(f"Tempo totale: {self.elapsed_time:.1f}s")
+            print(f"SLL outside FoV: {self.best_individual['sll_out']:.2f} dB")
+            print(f"SLL inside FoV: {self.best_individual['sll_in']:.2f} dB")
+            print(f"Number of clusters: {self.best_individual['n_clusters']}")
+            print(f"Total time: {self.elapsed_time:.1f}s")
             print(f"{'='*60}\n")
 
         return self.best_individual
 
 
 def main():
-    """Esegui ottimizzazione Genetic Algorithm"""
+    """Execute Genetic Algorithm optimization"""
     lattice = LatticeConfig(Nz=16, Ny=16, dist_z=0.6, dist_y=0.53, lattice_type=1)
     system = SystemConfig(freq=29.5e9, azi0=0, ele0=0, dele=0.5, dazi=0.5)
     mask = MaskConfig(elem=30, azim=60, SLL_level=20, SLLin=15)
@@ -286,13 +286,13 @@ def main():
         elite_size=2,
     )
 
-    print("Inizializzando array antenna...")
+    print("Initializing antenna array...")
     array = AntennaArray(lattice, system, mask, eef)
 
     ga_optimizer = GeneticAlgorithmOptimizer(array, cluster_config, ga_params)
     best_ga = ga_optimizer.run(verbose=True)
 
-    print(f"\nGA completato in {ga_optimizer.elapsed_time:.1f}s")
+    print(f"\nGA completed in {ga_optimizer.elapsed_time:.1f}s")
 
     return ga_optimizer
 

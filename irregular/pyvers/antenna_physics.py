@@ -1,6 +1,6 @@
 """
-Funzioni per calcolo array antenna con clustering
-Allineato al notebook clustering_comparison.ipynb
+Functions for antenna array calculation with clustering
+Aligned with clustering_comparison.ipynb notebook
 """
 
 import numpy as np
@@ -25,7 +25,7 @@ except ImportError:
 
 @dataclass
 class LatticeConfig:
-    """Configurazione lattice array"""
+    """Lattice array configuration"""
     Nz: int  # Number of rows
     Ny: int  # Number of columns
     dist_z: float  # antenna distance on z axis [times lambda]
@@ -35,7 +35,7 @@ class LatticeConfig:
 
 @dataclass
 class SystemConfig:
-    """Parametri sistema"""
+    """System parameters"""
     freq: float  # [Hz]
     lambda_: float = field(init=False)
     beta: float = field(init=False)
@@ -51,7 +51,7 @@ class SystemConfig:
 
 @dataclass
 class MaskConfig:
-    """Parametri maschera SLL"""
+    """SLL mask parameters"""
     elem: float = 30.0
     azim: float = 60.0
     SLL_level: float = 20.0
@@ -60,14 +60,14 @@ class MaskConfig:
 
 @dataclass
 class ElementPatternConfig:
-    """Configurazione pattern elemento"""
+    """Element pattern configuration"""
     P: int = 1
     Gel: float = 5.0
     load_file: int = 0
 
 
 class AntennaArray:
-    """Classe per array di antenne con clustering"""
+    """Class for antenna arrays with clustering"""
 
     def __init__(self, lattice: LatticeConfig, system: SystemConfig,
                  mask: MaskConfig, eef_config: Optional[ElementPatternConfig] = None):
@@ -329,15 +329,15 @@ class AntennaArray:
         if G_boresight is None:
             G_boresight = np.max(FF_I_dB)
 
-        # SLL out-of-FoV (relativo a G_boresight -> NEGATIVO)
+        # SLL out-of-FoV (relative to G_boresight -> NEGATIVE)
         sll_out_values = FF_I_dB[self.out_fov_mask]
         sll_out = (np.max(sll_out_values) - G_boresight) if len(sll_out_values) > 0 else -100
 
-        # FIX: SLL in-FoV - trova vero side lobe escludendo regione main lobe
-        # Trova il centro del main lobe
+        # FIX: SLL in-FoV - find true side lobe excluding main lobe region
+        # Find main lobe center
         main_idx = np.unravel_index(np.argmax(FF_I_dB), FF_I_dB.shape)
 
-        # Escludi regione main lobe (+/- 10 samples ~ 5 gradi con dele=0.5)
+        # Exclude main lobe region (+/- 10 samples ~ 5 degrees with dele=0.5)
         ele_excl = int(10 / self.system.dele) if hasattr(self, 'system') else 10
         azi_excl = int(10 / self.system.dazi) if hasattr(self, 'system') else 10
 

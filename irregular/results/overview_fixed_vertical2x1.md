@@ -1,228 +1,228 @@
-# Algoritmi di Clustering per Array di Antenne
+# Clustering Algorithms for Antenna Arrays
 
-## Panoramica
+## Overview
 
-Questo documento descrive il sistema di ottimizzazione del clustering per array di antenne.
+This document describes the clustering optimization system for antenna arrays.
 
 ---
 
 ## INPUT
 
-### Configurazione Array (`LatticeConfig`)
+### Array Configuration (`LatticeConfig`)
 
-| Parametro | Descrizione | Esempio |
+| Parameter | Description | Example |
 | --------- | ----------- | ------- |
-| `Nz` | Numero di righe (asse Z, verticale) | 16 |
-| `Ny` | Numero di colonne (asse Y, orizzontale) | 16 |
-| `dist_z` | Distanza verticale tra elementi [in λ] | 0.7 |
-| `dist_y` | Distanza orizzontale tra elementi [in λ] | 0.5 |
-| `lattice_type` | Tipo di reticolo (1=Rettangolare) | 1 |
+| `Nz` | Number of rows (Z axis, vertical) | 16 |
+| `Ny` | Number of columns (Y axis, horizontal) | 16 |
+| `dist_z` | Vertical distance between elements [in λ] | 0.7 |
+| `dist_y` | Horizontal distance between elements [in λ] | 0.5 |
+| `lattice_type` | Lattice type (1=Rectangular) | 1 |
 
-### Configurazione Sistema (`SystemConfig`)
+### System Configuration (`SystemConfig`)
 
-| Parametro | Descrizione | Esempio |
+| Parameter | Description | Example |
 | --------- | ----------- | ------- |
-| `freq` | Frequenza operativa [Hz] | 29.5e9 |
-| `azi0` | Azimuth direzione puntamento [°] | 0 |
-| `ele0` | Elevation direzione puntamento [°] | 0 |
-| `dele` | Risoluzione elevation [°] | 0.5 |
-| `dazi` | Risoluzione azimuth [°] | 0.5 |
-| `lambda_` | Lunghezza d'onda [m] (calcolato) | 0.01017 |
-| `beta` | Numero d'onda [rad/m] (calcolato) | 617.8 |
+| `freq` | Operating frequency [Hz] | 29.5e9 |
+| `azi0` | Azimuth pointing direction [°] | 0 |
+| `ele0` | Elevation pointing direction [°] | 0 |
+| `dele` | Elevation resolution [°] | 0.5 |
+| `dazi` | Azimuth resolution [°] | 0.5 |
+| `lambda_` | Wavelength [m] (calculated) | 0.01017 |
+| `beta` | Wave number [rad/m] (calculated) | 617.8 |
 
-### Configurazione Cluster (`ClusterConfig`)
+### Cluster Configuration (`ClusterConfig`)
 
-| Parametro            | Descrizione                                | Esempio                      |
-| -------------------- | ------------------------------------------ | ---------------------------- |
-| `Cluster_type`       | Lista di forme subarray [coordinate (n,m)] | `[np.array([[0,0], [0,1]])]` |
-| `rotation_cluster`   | Abilitazione rotazione cluster             | 0                            |
+| Parameter          | Description                                 | Example                      |
+| ------------------ | ------------------------------------------- | ---------------------------- |
+| `Cluster_type`     | List of subarray shapes [coordinates (n,m)] | `[np.array([[0,0], [0,1]])]` |
+| `rotation_cluster` | Enable cluster rotation                     | 0                            |
 
-**Nota sul formato Cluster_type:**
+**Note on Cluster_type format:**
 
-- `[[0,0], [0,1]]` = Vertical 2×1 (stesso n, m consecutivi)
-- `[[0,0], [1,0]]` = Horizontal 1×2 (stesso m, n consecutivi)
-- Coordinate: `[n, m]` dove n=colonna (Y), m=riga (Z)
+- `[[0,0], [0,1]]` = Vertical 2×1 (same n, consecutive m)
+- `[[0,0], [1,0]]` = Horizontal 1×2 (same m, consecutive n)
+- Coordinates: `[n, m]` where n=column (Y), m=row (Z)
 
-### Configurazione Maschera SLL (`MaskConfig`)
+### SLL Mask Configuration (`MaskConfig`)
 
-| Parametro | Descrizione | Esempio |
+| Parameter | Description | Example |
 | --------- | ----------- | ------- |
-| `elem` | Estensione elevation pattern [±°] | 30 |
-| `azim` | Estensione azimuth pattern [±°] | 60 |
-| `SLL_level` | Soglia SLL fuori dal FoV [dB] | 20 |
-| `SLLin` | Soglia SLL dentro il FoV [dB] | 15 |
+| `elem` | Elevation pattern extent [±°] | 30 |
+| `azim` | Azimuth pattern extent [±°] | 60 |
+| `SLL_level` | SLL threshold outside FoV [dB] | 20 |
+| `SLLin` | SLL threshold inside FoV [dB] | 15 |
 
-### Configurazione Pattern Elemento (`ElementPatternConfig`)
+### Element Pattern Configuration (`ElementPatternConfig`)
 
-| Parametro | Descrizione | Esempio |
+| Parameter | Description | Example |
 | --------- | ----------- | ------- |
-| `P` | Tipo pattern (1=coseno, altro=isotropico) | 1 |
-| `Gel` | Guadagno elemento [dBi] | 5 |
-| `load_file` | Carica da file (0=no) | 0 |
+| `P` | Pattern type (1=cosine, other=isotropic) | 1 |
+| `Gel` | Element gain [dBi] | 5 |
+| `load_file` | Load from file (0=no) | 0 |
 
-### Parametri Simulazione (`SimulationConfig`) - Solo per MC
+### Simulation Parameters (`SimulationConfig`) - MC Only
 
-| Parametro  | Descrizione                    | Esempio |
-|------------|--------------------------------|---------|
-| `Niter`    | Numero iterazioni Monte Carlo  | 200     |
-| `Cost_thr` | Soglia cost function           | 1000    |
+| Parameter  | Description                      | Example |
+| ---------- | -------------------------------- | ------- |
+| `Niter`    | Number of Monte Carlo iterations | 200     |
+| `Cost_thr` | Cost function threshold          | 1000    |
 
-### Parametri Genetic Algorithm (`GAParams`) - Solo per GA
+### Genetic Algorithm Parameters (`GAParams`) - GA Only
 
-| Parametro | Descrizione | Esempio |
+| Parameter | Description | Example |
 | --------- | ----------- | ------- |
-| `population_size` | Dimensione popolazione | 15 |
-| `max_generations` | Numero generazioni | 10 |
-| `mutation_rate` | Tasso mutazione | 0.15 |
-| `crossover_rate` | Tasso crossover | 0.8 |
-| `elite_size` | Individui elite preservati | 2 |
+| `population_size` | Population size | 15 |
+| `max_generations` | Number of generations | 10 |
+| `mutation_rate` | Mutation rate | 0.15 |
+| `crossover_rate` | Crossover rate | 0.8 |
+| `elite_size` | Preserved elite individuals | 2 |
 
 ---
 
-## OBIETTIVO
+## OBJECTIVE
 
-**Minimizzare la Cost Function `Cm`** che penalizza:
+**Minimize the Cost Function `Cm`** which penalizes:
 
-1. **Violazioni SLL fuori dal Field of View (FoV)**
+1. **SLL violations outside the Field of View (FoV)**
 
    ```text
    Cm_out = Σ max(0, FF_I_dB[out] - (-SLL_level))
    ```
 
-2. **Violazioni SLL dentro il FoV** (escluso lobo principale)
+2. **SLL violations inside the FoV** (excluding main lobe)
 
    ```text
    Cm_in = Σ max(0, FF_I_dB[in] - (-SLLin))
    ```
 
-3. **Penalità boresight** (se guadagno < -0.5 dB)
+3. **Boresight penalty** (if gain < -0.5 dB)
 
    ```text
-   Cm_boresight = |boresight_val| × 10  (se < -0.5 dB)
+   Cm_boresight = |boresight_val| × 10  (if < -0.5 dB)
    ```
 
-**Formula totale:**
+**Total formula:**
 
 ```text
 Cm = Cm_out + Cm_in + Cm_boresight
 ```
 
-**FoV (Field of View):** regione ±8° attorno alla direzione di puntamento (ele0, azi0).
+**FoV (Field of View):** region ±8° around the pointing direction (ele0, azi0).
 
 ---
 
-## METODI DI VALUTAZIONE
+## EVALUATION METHODS
 
-### 1. Configurazione Fissa (test_vertical_2x1.ipynb)
+### 1. Fixed Configuration (test_vertical_2x1.ipynb)
 
-- **Metodo**: Valutazione diretta di una configurazione predefinita
-- **Uso**: Verifica risultati teorici, test baseline
-- **Input**: Lista di cluster selezionati manualmente
-- **Output**: Metriche della singola configurazione
+- **Method**: Direct evaluation of a predefined configuration
+- **Use**: Verify theoretical results, baseline testing
+- **Input**: Manually selected cluster list
+- **Output**: Single configuration metrics
 
-### 2. Monte Carlo Originale
+### 2. Original Monte Carlo
 
-- **Metodo**: Selezione casuale dei cluster (probabilità 50% per ogni subarray)
-- **Esplorazione**: Puramente random
-- **Pro**: Semplice, baseline di riferimento
-- **Contro**: Inefficiente, non sfrutta soluzioni buone
+- **Method**: Random cluster selection (50% probability for each subarray)
+- **Exploration**: Purely random
+- **Pros**: Simple, reference baseline
+- **Cons**: Inefficient, doesn't leverage good solutions
 
-### 3. Monte Carlo Ottimizzato
+### 3. Optimized Monte Carlo
 
-- **Metodo**: Selezione adattiva basata su score dei cluster
-- **Esplorazione**: Probabilità proporzionale alla qualità storica
-- **Pro**: Converge più velocemente a soluzioni buone
-- **Contro**: Può rimanere in minimi locali
+- **Method**: Adaptive selection based on cluster scores
+- **Exploration**: Probability proportional to historical quality
+- **Pros**: Converges faster to good solutions
+- **Cons**: May get stuck in local minima
 
 ### 4. Genetic Algorithm (GA)
 
-- **Metodo**: Evoluzione di una popolazione di soluzioni
-- **Operatori**: Selezione, Crossover, Mutazione, Elitismo
-- **Pro**: Esplorazione globale, mantiene diversità
-- **Contro**: Più parametri da configurare
+- **Method**: Evolution of a solution population
+- **Operators**: Selection, Crossover, Mutation, Elitism
+- **Pros**: Global exploration, maintains diversity
+- **Cons**: More parameters to configure
 
 ---
 
 ## OUTPUT
 
-### Output di `evaluate_clustering()`
+### Output of `evaluate_clustering()`
 
-| Metrica | Chiave Dict | Descrizione | Unità |
+| Metric | Dict Key | Description | Unit |
 | ------- | ----------- | ----------- | ----- |
-| Cost Function | `Cm` | Funzione costo (più basso = migliore) | int |
-| N. Cluster | `Ntrans` | Numero di cluster selezionati | int |
-| Elementi/cluster | `Lsub` | Array con elementi per ogni cluster | array |
-| SLL out FoV | `sll_out` | Max side lobe fuori dal FoV | dB |
-| SLL in FoV | `sll_in` | Max side lobe dentro il FoV (escluso main) | dB |
-| Guadagno | `G_boresight` | Guadagno al boresight | dBi |
-| Pattern | `FF_I_dB` | Far-field normalizzato 2D | dB |
-| Max θ | `theta_max` | Elevation del massimo | ° |
-| Max φ | `phi_max` | Azimuth del massimo | ° |
-| Scan Loss | `SL_maxpointing` | Perdita vs massimo | dB |
-| Scan Loss (0,0) | `SL_theta_phi` | Perdita vs boresight nominale | dB |
+| Cost Function | `Cm` | Cost function (lower = better) | int |
+| N. Clusters | `Ntrans` | Number of selected clusters | int |
+| Elements/cluster | `Lsub` | Array with elements per cluster | array |
+| SLL out FoV | `sll_out` | Max side lobe outside FoV | dB |
+| SLL in FoV | `sll_in` | Max side lobe inside FoV (excluding main) | dB |
+| Gain | `G_boresight` | Boresight gain | dBi |
+| Pattern | `FF_I_dB` | Normalized 2D far-field | dB |
+| Max θ | `theta_max` | Elevation of maximum | ° |
+| Max φ | `phi_max` | Azimuth of maximum | ° |
+| Scan Loss | `SL_maxpointing` | Loss vs maximum | dB |
+| Scan Loss (0,0) | `SL_theta_phi` | Loss vs nominal boresight | dB |
 
-**Calcolo `G_boresight`:**
+**`G_boresight` calculation:**
 
 ```text
 G_boresight = Gel + 10*log10(Σ Lsub)
-            = Guadagno_elemento + 10*log10(N_elementi_totali)
+            = Element_gain + 10*log10(N_total_elements)
 ```
 
-### Output analisi lobi (`extract_lobe_metrics`)
+### Lobe analysis output (`extract_lobe_metrics`)
 
-| Metrica | Chiave | Descrizione | Unità |
+| Metric | Key | Description | Unit |
 | ------- | ------ | ----------- | ----- |
-| Main Lobe | `main_lobe_gain` | Guadagno lobo principale | dBi |
-| HPBW Ele | `hpbw_ele` | Larghezza fascio a -3dB (elevation) | ° |
-| HPBW Azi | `hpbw_azi` | Larghezza fascio a -3dB (azimuth) | ° |
-| SLL Ele | `sll_ele_relative` | SLL relativo taglio elevation | dB |
-| SLL Azi | `sll_azi_relative` | SLL relativo taglio azimuth | dB |
-| N. Lobi Ele | `n_lobes_ele` | Numero lobi in elevation | int |
-| N. Lobi Azi | `n_lobes_azi` | Numero lobi in azimuth | int |
+| Main Lobe | `main_lobe_gain` | Main lobe gain | dBi |
+| HPBW Ele | `hpbw_ele` | Beam width at -3dB (elevation) | ° |
+| HPBW Azi | `hpbw_azi` | Beam width at -3dB (azimuth) | ° |
+| SLL Ele | `sll_ele_relative` | Relative SLL elevation cut | dB |
+| SLL Azi | `sll_azi_relative` | Relative SLL azimuth cut | dB |
+| N. Lobes Ele | `n_lobes_ele` | Number of lobes in elevation | int |
+| N. Lobes Azi | `n_lobes_azi` | Number of lobes in azimuth | int |
 
 ---
 
-## SCHEMA RIASSUNTIVO
+## SUMMARY DIAGRAM
 
 ```text
 ┌─────────────────────────────────────────────────────────────────┐
 │                           INPUT                                  │
 ├─────────────────────────────────────────────────────────────────┤
-│  • LatticeConfig: Nz×Ny elementi, dist_z, dist_y [λ]            │
+│  • LatticeConfig: Nz×Ny elements, dist_z, dist_y [λ]            │
 │  • SystemConfig: freq, azi0, ele0, dele, dazi                   │
 │  • MaskConfig: elem, azim, SLL_level, SLLin                     │
-│  • ClusterConfig: Cluster_type (es. [[0,0],[0,1]] = vert 2×1)   │
+│  • ClusterConfig: Cluster_type (e.g. [[0,0],[0,1]] = vert 2×1)  │
 │  • ElementPatternConfig: P, Gel, load_file                      │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                    GENERAZIONE SUBARRAYS                         │
+│                    SUBARRAY GENERATION                           │
 ├─────────────────────────────────────────────────────────────────┤
-│  FullSubarraySetGeneration genera tutti i possibili             │
-│  posizionamenti del cluster_type sull'array                     │
-│  Es: array 16×16 con cluster 2×1 → 128 subarrays possibili      │
+│  FullSubarraySetGeneration generates all possible               │
+│  placements of the cluster_type on the array                    │
+│  E.g.: 16×16 array with 2×1 cluster → 128 possible subarrays    │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                 SELEZIONE CLUSTER                                │
+│                 CLUSTER SELECTION                                │
 ├─────────────────────────────────────────────────────────────────┤
-│  • Fissa: tutti i cluster (full tiling)                         │
-│  • MC: selezione random 50%                                     │
-│  • MC Opt: selezione adattiva                                   │
-│  • GA: evoluzione popolazione                                   │
+│  • Fixed: all clusters (full tiling)                            │
+│  • MC: random selection 50%                                     │
+│  • MC Opt: adaptive selection                                   │
+│  • GA: population evolution                                     │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                  VALUTAZIONE (evaluate_clustering)               │
+│                  EVALUATION (evaluate_clustering)                │
 ├─────────────────────────────────────────────────────────────────┤
-│  1. Calcola posizioni fisiche (Yc, Zc) dei cluster              │
-│  2. Calcola coefficienti di fase (c0)                           │
-│  3. Calcola far-field pattern (FF_I_dB)                         │
-│  4. Calcola cost function (Cm)                                  │
-│  5. Calcola SLL in/out FoV                                      │
+│  1. Calculate physical positions (Yc, Zc) of clusters           │
+│  2. Calculate phase coefficients (c0)                           │
+│  3. Calculate far-field pattern (FF_I_dB)                       │
+│  4. Calculate cost function (Cm)                                │
+│  5. Calculate SLL in/out FoV                                    │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -230,39 +230,39 @@ G_boresight = Gel + 10*log10(Σ Lsub)
 │                          OUTPUT                                  │
 ├─────────────────────────────────────────────────────────────────┤
 │  • Cm, Ntrans, Lsub, sll_in, sll_out, G_boresight               │
-│  • FF_I_dB (pattern 2D)                                         │
-│  • Metriche lobi: HPBW, SLL relativi, n_lobes                   │
-│  • Plot: lobe analysis, pattern 2D, cluster layout              │
+│  • FF_I_dB (2D pattern)                                         │
+│  • Lobe metrics: HPBW, relative SLL, n_lobes                    │
+│  • Plots: lobe analysis, 2D pattern, cluster layout             │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## FILE DEL PROGETTO
+## PROJECT FILES
 
-| File | Descrizione |
+| File | Description |
 | ---- | ----------- |
-| `clustering_comparison.ipynb` | Notebook con MC, MC Opt, GA |
-| `test_vertical_2x1.ipynb` | Test configurazione fissa vertical 2×1 |
-| `antenna_physics.py` | Classe AntennaArray |
-| `plot_results_mc.py` | Funzioni di plotting |
+| `clustering_comparison.ipynb` | Notebook with MC, MC Opt, GA |
+| `test_vertical_2x1.ipynb` | Fixed vertical 2×1 configuration test |
+| `antenna_physics.py` | AntennaArray class |
+| `plot_results_mc.py` | Plotting functions |
 
 ---
 
-## ESEMPIO: test_vertical_2x1.ipynb
+## EXAMPLE: test_vertical_2x1.ipynb
 
-**Configurazione:**
+**Configuration:**
 
 ```python
 lattice = LatticeConfig(Nz=16, Ny=16, dist_z=0.7, dist_y=0.5)
 cluster_type = np.array([[0, 0], [0, 1]])  # Vertical 2×1
 ```
 
-**Output tipico (full tiling 128 cluster):**
+**Typical output (full tiling 128 clusters):**
 
 ```text
-Ntrans:      128 cluster
-Nel:         256 elementi (128 × 2)
+Ntrans:      128 clusters
+Nel:         256 elements (128 × 2)
 Cm:          7150
 G_boresight: 29.08 dBi
 SLL out:     -13.32 dB
