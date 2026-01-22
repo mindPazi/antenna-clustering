@@ -22,6 +22,7 @@ class SimulationConfig:
     """Parametri simulazione"""
     Niter: int = 1000
     Cost_thr: int = 1000
+    random_seed: int = None  # FIX: per riproducibilità
 
 
 @dataclass
@@ -151,8 +152,15 @@ class IrregularClusteringMonteCarlo:
         return selected_clusters, np.concatenate(selected_rows)
 
     def _update_adaptive_scores(self, selected_rows: np.ndarray, Cm: int):
-        """OPT: Aggiorna score adattivi"""
-        reward = max(0, self.sim_config.Cost_thr - Cm) / self.sim_config.Cost_thr
+        """OPT: Aggiorna score adattivi.
+
+        FIX: Usa scaling esponenziale invece di cutoff.
+        Prima: reward = max(0, Cost_thr - Cm) -> sempre 0 se Cm > Cost_thr
+        Ora: reward = exp(-Cm/Cost_thr) -> sempre > 0, impara anche da soluzioni cattive
+        """
+        normalized_cm = Cm / self.sim_config.Cost_thr
+        reward = np.exp(-normalized_cm)  # Range [0, 1], mai zero
+
         indices = np.where(selected_rows == 1)[0]
         self._cluster_scores[indices] += reward
         self._selection_counts[indices] += 1
@@ -247,6 +255,10 @@ class IrregularClusteringMonteCarlo:
 
     def run(self, verbose: bool = True, use_optimizations: bool = True) -> Dict:
         """Esegue ottimizzazione"""
+        # FIX: Applica seed per riproducibilità
+        if self.sim_config.random_seed is not None:
+            np.random.seed(self.sim_config.random_seed)
+
         start_time = time.time()
 
         if verbose:
@@ -271,20 +283,20 @@ class IrregularClusteringMonteCarlo:
                 print(f"  [Progresso: {ij_cont}/{self.sim_config.Niter} ({pct:.0f}%) | Best Cm: {best_Cm_so_far:.0f}]", end="\r")
 
             # Selezione cluster
-            if use_optimizations and ij_cont <= 10:
-                if verbose and ij_cont == 1:
-                    print("  >> Fase 1: Greedy initialization (iter 1-10)")
-                Cluster, selected_rows = self._greedy_initialization()
-            elif use_optimizations and ij_cont == 11:
-                if verbose:
-                    print("\n  >> Fase 2: Random sampling (iter 11-50)")
-                Cluster, selected_rows = self._select_random_clusters()
-            elif use_optimizations and ij_cont == 51:
-                if verbose:
-                    print("\n  >> Fase 3: Adaptive sampling (iter 51+)")
-                Cluster, selected_rows = self._select_adaptive_clusters()
-            elif use_optimizations and ij_cont > 50:
-                Cluster, selected_rows = self._select_adaptive_clusters()
+            # FIX: Logica pulita senza rami ridondanti
+            if use_optimizations:
+                if ij_cont <= 10:
+                    if verbose and ij_cont == 1:
+                        print("  >> Fase 1: Greedy initialization (iter 1-10)")
+                    Cluster, selected_rows = self._greedy_initialization()
+                elif ij_cont <= 50:
+                    if verbose and ij_cont == 11:
+                        print("\n  >> Fase 2: Random sampling (iter 11-50)")
+                    Cluster, selected_rows = self._select_random_clusters()
+                else:  # ij_cont > 50
+                    if verbose and ij_cont == 51:
+                        print("\n  >> Fase 3: Adaptive sampling (iter 51+)")
+                    Cluster, selected_rows = self._select_adaptive_clusters()
             else:
                 Cluster, selected_rows = self._select_random_clusters()
 

@@ -243,6 +243,7 @@ class AntennaArray:
         # OPT: Vectorized kernel computation
         all_Y = []
         all_Z = []
+        all_Ac = []  # FIX: collect element excitation weights
         cluster_indices = []
 
         for kk in range(Ntrans):
@@ -251,16 +252,20 @@ class AntennaArray:
                 if not np.isnan(Yc[jj, kk]) and not np.isnan(Zc[jj, kk]):
                     all_Y.append(Yc[jj, kk])
                     all_Z.append(Zc[jj, kk])
+                    # FIX: collect Ac value (default to 1.0 if NaN)
+                    all_Ac.append(Ac[jj, kk] if not np.isnan(Ac[jj, kk]) else 1.0)
                     cluster_indices.append(kk)
 
         all_Y_np = np.array(all_Y)
         all_Z_np = np.array(all_Z)
+        all_Ac_np = np.array(all_Ac)  # FIX: element excitation array
         cluster_indices_np = np.array(cluster_indices)
 
         # OPT: GPU acceleration - transfer to GPU if available
         if GPU_AVAILABLE:
             all_Y_gpu = xp.asarray(all_Y_np)
             all_Z_gpu = xp.asarray(all_Z_np)
+            all_Ac_gpu = xp.asarray(all_Ac_np)  # FIX: transfer Ac to GPU
             VV_flat_gpu = xp.asarray(VV_flat)
             WW_flat_gpu = xp.asarray(WW_flat)
             Fel_VW_flat_gpu = xp.asarray(Fel_VW_flat)
@@ -268,6 +273,7 @@ class AntennaArray:
             # Compute phases on GPU
             phases = xp.exp(1j * (xp.outer(VV_flat_gpu, all_Y_gpu) + xp.outer(WW_flat_gpu, all_Z_gpu)))
             phases = phases * Fel_VW_flat_gpu[:, xp.newaxis]
+            phases = phases * all_Ac_gpu[xp.newaxis, :]  # FIX: apply element excitation
 
             # Transfer back to CPU for add.at (not available in CuPy)
             phases_np = cp.asnumpy(phases)
@@ -275,6 +281,7 @@ class AntennaArray:
             # CPU computation
             phases_np = np.exp(1j * (np.outer(VV_flat, all_Y_np) + np.outer(WW_flat, all_Z_np)))
             phases_np = phases_np * Fel_VW_flat[:, np.newaxis]
+            phases_np = phases_np * all_Ac_np[np.newaxis, :]  # FIX: apply element excitation
 
         # OPT: Sum contributions using np.add.at
         KerFF_sub = np.zeros((Npoints, Ntrans), dtype=complex)
@@ -309,7 +316,16 @@ class AntennaArray:
         return int(Cm)
 
     def compute_sll(self, FF_I_dB: np.ndarray, G_boresight: float = None):
-        # Calcola G_boresight se non fornito
+        """
+        Compute Side Lobe Levels using proper main lobe exclusion.
+
+        FIX: Instead of finding "second maximum" with arbitrary threshold,
+        we exclude the main lobe region and find the true side lobe peak.
+
+        Returns:
+            sll_in: SLL inside FoV (relative to G_boresight, negative dB)
+            sll_out: SLL outside FoV (relative to G_boresight, negative dB)
+        """
         if G_boresight is None:
             G_boresight = np.max(FF_I_dB)
 
@@ -317,12 +333,26 @@ class AntennaArray:
         sll_out_values = FF_I_dB[self.out_fov_mask]
         sll_out = (np.max(sll_out_values) - G_boresight) if len(sll_out_values) > 0 else -100
 
-        # SLL in-FoV (secondo massimo, relativo a G_boresight -> NEGATIVO)
-        sll_in_values = FF_I_dB[self.in_fov_mask]
-        if len(sll_in_values) > 0:
-            max_val = np.max(sll_in_values)
-            second_max = np.max(sll_in_values[sll_in_values < max_val - 0.1]) if np.any(sll_in_values < max_val - 0.1) else max_val
-            sll_in = second_max - G_boresight
+        # FIX: SLL in-FoV - trova vero side lobe escludendo regione main lobe
+        # Trova il centro del main lobe
+        main_idx = np.unravel_index(np.argmax(FF_I_dB), FF_I_dB.shape)
+
+        # Escludi regione main lobe (+/- 10 samples ~ 5 gradi con dele=0.5)
+        ele_excl = int(10 / self.system.dele) if hasattr(self, 'system') else 10
+        azi_excl = int(10 / self.system.dazi) if hasattr(self, 'system') else 10
+
+        main_lobe_mask = np.zeros_like(FF_I_dB, dtype=bool)
+        ele_start = max(0, main_idx[0] - ele_excl)
+        ele_end = min(FF_I_dB.shape[0], main_idx[0] + ele_excl + 1)
+        azi_start = max(0, main_idx[1] - azi_excl)
+        azi_end = min(FF_I_dB.shape[1], main_idx[1] + azi_excl + 1)
+        main_lobe_mask[ele_start:ele_end, azi_start:azi_end] = True
+
+        # Side lobe region: dentro FoV ma fuori main lobe
+        sidelobe_mask = self.in_fov_mask & ~main_lobe_mask
+
+        if np.any(sidelobe_mask):
+            sll_in = np.max(FF_I_dB[sidelobe_mask]) - G_boresight
         else:
             sll_in = -100
 

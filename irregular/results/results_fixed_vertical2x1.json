@@ -1,0 +1,27 @@
+{
+  "configuration": {
+    "array_size": "16x16",
+    "total_elements": 256,
+    "dist_z_lambda": 0.7,
+    "dist_y_lambda": 0.5,
+    "frequency_GHz": 29.5,
+    "lambda_mm": 10.169491525423728,
+    "cluster_type": "vertical_2x1",
+    "num_clusters": 128,
+    "elements_per_cluster": 2
+  },
+  "results": {
+    "cost_function_Cm": 7150,
+    "G_boresight_dBi": 29.082399653118497,
+    "SLL_out_FoV_dB": -13.321437865468912,
+    "SLL_in_FoV_dB": -3.0785513044687662,
+    "HPBW_elevation_deg": 5.0,
+    "HPBW_azimuth_deg": 7.0,
+    "SLL_elevation_relative_dB": -13.25872586276072,
+    "SLL_azimuth_relative_dB": -13.321437865468912,
+    "num_lobes_elevation": 11,
+    "num_lobes_azimuth": 13,
+    "max_pointing_theta_deg": 0.0,
+    "max_pointing_phi_deg": 0.0
+  }
+}

@@ -25,11 +25,12 @@ from antenna_clustering_MC import (
 @dataclass
 class GAParams:
     """Parametri Genetic Algorithm"""
-    population_size: int = 20
-    max_generations: int = 15
+    population_size: int = 50   # FIX: aumentato da 20 per migliore convergenza
+    max_generations: int = 100  # FIX: aumentato da 15 per migliore convergenza
     mutation_rate: float = 0.15
     crossover_rate: float = 0.8
-    elite_size: int = 3
+    elite_size: int = 5         # FIX: aumentato da 3
+    random_seed: int = None     # FIX: per riproducibilità
 
 
 class GeneticAlgorithmOptimizer:
@@ -142,7 +143,11 @@ class GeneticAlgorithmOptimizer:
         return child1_genes, child2_genes
 
     def _mutate(self, genes: np.ndarray) -> np.ndarray:
-        """Mutazione bit flip"""
+        """Mutazione bit flip.
+
+        FIX: Copia l'array prima di modificarlo per evitare side effects.
+        """
+        genes = genes.copy()  # FIX: evita modifica in-place
         mask = np.random.random(self.total_clusters) < self.params.mutation_rate
         genes[mask] = 1 - genes[mask]
         return genes
@@ -154,6 +159,10 @@ class GeneticAlgorithmOptimizer:
 
     def run(self, verbose=True):
         """Esegui GA"""
+        # FIX: Applica seed per riproducibilità
+        if self.params.random_seed is not None:
+            np.random.seed(self.params.random_seed)
+
         if verbose:
             print(f"\n{'='*60}")
             print(f"GENETIC ALGORITHM - ANTENNA CLUSTERING")
