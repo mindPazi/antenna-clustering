@@ -11,7 +11,7 @@ from typing import Dict
 from plot_results_mc import extract_lobe_metrics
 
 
-def plot_ga_results(ga_optimizer):
+def plot_ga_results(ga_optimizer, save_path='../results_png/GA_optimization_results.png'):
     """Plot Genetic Algorithm results - complete version"""
     history = ga_optimizer.history
     best = ga_optimizer.best_individual
@@ -103,6 +103,7 @@ def plot_ga_results(ga_optimizer):
     plt.suptitle('Genetic Algorithm Optimization - 16x16 Antenna Array Clustering',
                  fontsize=16, fontweight='bold', y=0.995)
 
-    plt.savefig('GA_optimization_results.png', dpi=300, bbox_inches='tight')
-    print("Plots saved to 'GA_optimization_results.png'")
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Plots saved to '{save_path}'")
     plt.show()

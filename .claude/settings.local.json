@@ -3,7 +3,8 @@
     "allow": [
       "Bash(python:*)",
       "Bash(python3:*)",
-      "Bash(powershell -Command \"[System.IO.File]::ReadAllText\\(''clustering_comparison.ipynb''\\).Substring\\(0, 100000\\)\")"
+      "Bash(powershell -Command \"[System.IO.File]::ReadAllText\\(''clustering_comparison.ipynb''\\).Substring\\(0, 100000\\)\")",
+      "Bash(dir /s /b /a:d __pycache__)"
     ]
   }
 }
