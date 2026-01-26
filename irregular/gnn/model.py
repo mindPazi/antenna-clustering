@@ -13,7 +13,7 @@ import torch.nn.functional as F
 from typing import Optional, Tuple
 
 from .config import GNNConfig
-from .layers import GCNLayer, GATLayer, EdgeConvLayer
+from .layers import GCNLayer, GATLayer
 
 
 class AntennaClusteringGNN(nn.Module):

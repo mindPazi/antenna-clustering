@@ -8,6 +8,7 @@ Supports multiple edge creation strategies: k-NN, radius-based, mutual coupling.
 import torch
 import numpy as np
 from typing import Optional, Tuple, Union
+from scipy.spatial import cKDTree
 from .config import GraphConfig
 
 
@@ -40,9 +41,30 @@ class GraphBuilder:
         Returns:
             edge_index: (2, E) tensor of edge indices in COO format
         """
-        # TODO: Implement k-NN edge construction
-        # Use torch_geometric.nn.knn_graph or scipy.spatial.cKDTree
-        raise NotImplementedError
+        k = k or self.config.k_neighbors
+        n = positions.shape[0]
+
+        # Convert to numpy for scipy KDTree
+        pos_np = positions.detach().cpu().numpy()
+
+        # Build KD-tree for efficient neighbor search
+        tree = cKDTree(pos_np)
+
+        # Query k+1 neighbors (includes self)
+        _, indices = tree.query(pos_np, k=min(k + 1, n))
+
+        # Build edge list (excluding self-loops here, added later if needed)
+        source = []
+        target = []
+        for i in range(n):
+            for j in indices[i]:
+                if i != j:  # Exclude self-loops
+                    source.append(i)
+                    target.append(j)
+
+        edge_index = torch.tensor([source, target], dtype=torch.long,
+                                   device=positions.device)
+        return edge_index
 
     def build_radius_edges(
         self,
@@ -61,8 +83,28 @@ class GraphBuilder:
         Returns:
             edge_index: (2, E) tensor of edge indices
         """
-        # TODO: Implement radius-based edge construction
-        raise NotImplementedError
+        radius = radius or self.config.radius
+
+        # Convert to numpy for scipy KDTree
+        pos_np = positions.detach().cpu().numpy()
+
+        # Build KD-tree
+        tree = cKDTree(pos_np)
+
+        # Find all pairs within radius
+        pairs = tree.query_pairs(radius, output_type='ndarray')
+
+        # Create bidirectional edges
+        if len(pairs) > 0:
+            source = np.concatenate([pairs[:, 0], pairs[:, 1]])
+            target = np.concatenate([pairs[:, 1], pairs[:, 0]])
+            edge_index = torch.tensor([source, target], dtype=torch.long,
+                                       device=positions.device)
+        else:
+            edge_index = torch.zeros((2, 0), dtype=torch.long,
+                                      device=positions.device)
+
+        return edge_index
 
     def build_coupling_edges(
         self,
@@ -81,8 +123,20 @@ class GraphBuilder:
         Returns:
             edge_index: (2, E) tensor of edge indices
         """
-        # TODO: Implement coupling-based edge construction
-        raise NotImplementedError
+        threshold = threshold or self.config.coupling_threshold
+
+        # Compute magnitude of coupling
+        coupling_mag = torch.abs(coupling_matrix)
+
+        # Find edges where coupling exceeds threshold (excluding diagonal)
+        n = coupling_matrix.shape[0]
+        mask = (coupling_mag > threshold) & ~torch.eye(n, dtype=torch.bool,
+                                                        device=coupling_matrix.device)
+
+        # Get edge indices
+        edge_index = torch.nonzero(mask, as_tuple=False).T
+
+        return edge_index
 
     def compute_adjacency_matrix(
         self,
@@ -101,8 +155,18 @@ class GraphBuilder:
         Returns:
             adj: (N, N) adjacency matrix
         """
-        # TODO: Implement adjacency matrix construction
-        raise NotImplementedError
+        device = edge_index.device
+        adj = torch.zeros((num_nodes, num_nodes), device=device)
+
+        if edge_index.shape[1] > 0:
+            adj[edge_index[0], edge_index[1]] = 1.0
+
+        if symmetric:
+            adj = (adj + adj.T) / 2
+            # Ensure binary values
+            adj = (adj > 0).float()
+
+        return adj
 
     def compute_degree_matrix(self, adj: torch.Tensor) -> torch.Tensor:
         """
@@ -116,8 +180,9 @@ class GraphBuilder:
         Returns:
             deg: (N, N) diagonal degree matrix
         """
-        # TODO: Implement degree matrix computation
-        raise NotImplementedError
+        degrees = adj.sum(dim=1)
+        deg = torch.diag(degrees)
+        return deg
 
     def compute_edge_features(
         self,
@@ -141,14 +206,36 @@ class GraphBuilder:
         Returns:
             edge_attr: (E, F) edge feature matrix
         """
-        # TODO: Implement edge feature computation
-        raise NotImplementedError
+        if edge_index.shape[1] == 0:
+            # No edges
+            num_features = 1 if coupling_matrix is None else 3
+            return torch.zeros((0, num_features), device=positions.device)
+
+        src, dst = edge_index[0], edge_index[1]
+
+        # Euclidean distance
+        pos_src = positions[src]
+        pos_dst = positions[dst]
+        distances = torch.norm(pos_src - pos_dst, dim=1, keepdim=True)
+
+        if coupling_matrix is None:
+            return distances
+
+        # Mutual coupling features
+        coupling_vals = coupling_matrix[src, dst]
+        coupling_mag = torch.abs(coupling_vals).unsqueeze(1)
+        coupling_phase = torch.angle(coupling_vals).unsqueeze(1)
+
+        # Concatenate all features
+        edge_attr = torch.cat([distances, coupling_mag, coupling_phase], dim=1)
+
+        return edge_attr
 
     def build_graph(
         self,
         positions: Union[torch.Tensor, np.ndarray],
         coupling_matrix: Optional[Union[torch.Tensor, np.ndarray]] = None
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
         """
         Build complete graph representation from antenna positions.
 
@@ -165,8 +252,42 @@ class GraphBuilder:
                 - deg: (N, N) degree matrix
                 - edge_attr: (E, F) edge features (or None)
         """
-        # TODO: Implement complete graph building pipeline
-        raise NotImplementedError
+        # Convert numpy to torch if needed
+        if isinstance(positions, np.ndarray):
+            positions = torch.from_numpy(positions).float()
+
+        if coupling_matrix is not None and isinstance(coupling_matrix, np.ndarray):
+            coupling_matrix = torch.from_numpy(coupling_matrix)
+
+        n = positions.shape[0]
+        device = positions.device
+
+        # Build edges based on connection type
+        if self.config.connection_type == "knn":
+            edge_index = self.build_knn_edges(positions)
+        elif self.config.connection_type == "radius":
+            edge_index = self.build_radius_edges(positions)
+        elif self.config.connection_type == "coupling":
+            if coupling_matrix is None:
+                raise ValueError("Coupling matrix required for coupling-based edges")
+            edge_index = self.build_coupling_edges(coupling_matrix)
+        else:
+            raise ValueError(f"Unknown connection type: {self.config.connection_type}")
+
+        # Compute adjacency matrix
+        adj = self.compute_adjacency_matrix(edge_index, n, symmetric=True)
+
+        # Add self-loops if configured
+        if self.config.add_self_loops:
+            adj = adj + torch.eye(n, device=device)
+
+        # Compute degree matrix
+        deg = self.compute_degree_matrix(adj)
+
+        # Compute edge features
+        edge_attr = self.compute_edge_features(positions, edge_index, coupling_matrix)
+
+        return edge_index, adj, deg, edge_attr
 
 
 def normalized_adjacency(adj: torch.Tensor, deg: torch.Tensor) -> torch.Tensor:
@@ -182,5 +303,18 @@ def normalized_adjacency(adj: torch.Tensor, deg: torch.Tensor) -> torch.Tensor:
     Returns:
         norm_adj: (N, N) normalized adjacency matrix
     """
-    # TODO: Implement symmetric normalization
-    raise NotImplementedError
+    # Get diagonal degrees
+    d = torch.diag(deg)
+
+    # Compute D^{-1/2}, handling zero degrees
+    d_inv_sqrt = torch.zeros_like(d)
+    mask = d > 0
+    d_inv_sqrt[mask] = torch.pow(d[mask], -0.5)
+
+    # Create diagonal matrix
+    d_inv_sqrt_mat = torch.diag(d_inv_sqrt)
+
+    # Compute normalized adjacency: D^{-1/2} A D^{-1/2}
+    norm_adj = d_inv_sqrt_mat @ adj @ d_inv_sqrt_mat
+
+    return norm_adj

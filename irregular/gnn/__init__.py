@@ -11,33 +11,64 @@ Architecture overview:
     4. Loss: MinCut + Orthogonality (no labels needed)
 """
 
-from .config import GNNConfig, TrainingConfig
-from .graph import GraphBuilder
-from .layers import GCNLayer, GATLayer
-from .model import AntennaClusteringGNN
-from .losses import mincut_loss, orthogonality_loss, entropy_loss, total_loss
-from .train import Trainer
-from .utils import normalize_positions, get_hard_assignments
+from .config import GNNConfig, GraphConfig, TrainingConfig, ClusteringConfig
+from .graph import GraphBuilder, normalized_adjacency
+from .layers import GCNLayer, GATLayer, EdgeConvLayer
+from .model import AntennaClusteringGNN, AntennaClusteringGNNWithEdgeFeatures
+from .losses import (
+    mincut_loss,
+    orthogonality_loss,
+    entropy_loss,
+    cluster_size_loss,
+    total_loss,
+    ClusteringLoss
+)
+from .train import Trainer, TrainingResult, train_clustering
+from .utils import (
+    normalize_positions,
+    get_hard_assignments,
+    get_device,
+    cluster_sizes,
+    cluster_to_list,
+    assignments_to_antenna_format,
+    compute_clustering_metrics,
+    set_seed
+)
 
 __all__ = [
     # Config
     "GNNConfig",
+    "GraphConfig",
     "TrainingConfig",
+    "ClusteringConfig",
     # Graph
     "GraphBuilder",
+    "normalized_adjacency",
     # Layers
     "GCNLayer",
     "GATLayer",
+    "EdgeConvLayer",
     # Model
     "AntennaClusteringGNN",
+    "AntennaClusteringGNNWithEdgeFeatures",
     # Losses
     "mincut_loss",
     "orthogonality_loss",
     "entropy_loss",
+    "cluster_size_loss",
     "total_loss",
+    "ClusteringLoss",
     # Training
     "Trainer",
+    "TrainingResult",
+    "train_clustering",
     # Utils
     "normalize_positions",
     "get_hard_assignments",
+    "get_device",
+    "cluster_sizes",
+    "cluster_to_list",
+    "assignments_to_antenna_format",
+    "compute_clustering_metrics",
+    "set_seed",
 ]

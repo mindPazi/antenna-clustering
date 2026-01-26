@@ -32,7 +32,6 @@ class LatticeConfig:
     dist_y: float  # antenna distance on y axis [times lambda]
     lattice_type: int = 1  # 1=Rectangular
 
-
 @dataclass
 class SystemConfig:
     """System parameters"""
@@ -48,7 +47,6 @@ class SystemConfig:
         self.lambda_ = 3e8 / self.freq
         self.beta = 2 * np.pi / self.lambda_
 
-
 @dataclass
 class MaskConfig:
     """SLL mask parameters"""
@@ -56,7 +54,6 @@ class MaskConfig:
     azim: float = 60.0
     SLL_level: float = 20.0
     SLLin: float = 15.0
-
 
 @dataclass
 class ElementPatternConfig:
@@ -252,7 +249,6 @@ class AntennaArray:
                 if not np.isnan(Yc[jj, kk]) and not np.isnan(Zc[jj, kk]):
                     all_Y.append(Yc[jj, kk])
                     all_Z.append(Zc[jj, kk])
-                    # FIX: collect Ac value (default to 1.0 if NaN)
                     all_Ac.append(Ac[jj, kk] if not np.isnan(Ac[jj, kk]) else 1.0)
                     cluster_indices.append(kk)
 
@@ -281,7 +277,7 @@ class AntennaArray:
             # CPU computation
             phases_np = np.exp(1j * (np.outer(VV_flat, all_Y_np) + np.outer(WW_flat, all_Z_np)))
             phases_np = phases_np * Fel_VW_flat[:, np.newaxis]
-            phases_np = phases_np * all_Ac_np[np.newaxis, :]  # FIX: apply element excitation
+            phases_np = phases_np * all_Ac_np[np.newaxis, :]  # FIX: apply Ac
 
         # OPT: Sum contributions using np.add.at
         KerFF_sub = np.zeros((Npoints, Ntrans), dtype=complex)
@@ -316,28 +312,16 @@ class AntennaArray:
         return int(Cm)
 
     def compute_sll(self, FF_I_dB: np.ndarray, G_boresight: float = None):
-        """
-        Compute Side Lobe Levels using proper main lobe exclusion.
-
-        FIX: Instead of finding "second maximum" with arbitrary threshold,
-        we exclude the main lobe region and find the true side lobe peak.
-
-        Returns:
-            sll_in: SLL inside FoV (relative to G_boresight, negative dB)
-            sll_out: SLL outside FoV (relative to G_boresight, negative dB)
-        """
+        """FIX: Trova vero side lobe escludendo regione main lobe."""
         if G_boresight is None:
             G_boresight = np.max(FF_I_dB)
 
-        # SLL out-of-FoV (relative to G_boresight -> NEGATIVE)
+        # SLL out-of-FoV
         sll_out_values = FF_I_dB[self.out_fov_mask]
         sll_out = (np.max(sll_out_values) - G_boresight) if len(sll_out_values) > 0 else -100
 
-        # FIX: SLL in-FoV - find true side lobe excluding main lobe region
-        # Find main lobe center
+        # FIX: SLL in-FoV - escludi regione main lobe
         main_idx = np.unravel_index(np.argmax(FF_I_dB), FF_I_dB.shape)
-
-        # Exclude main lobe region (+/- 10 samples ~ 5 degrees with dele=0.5)
         ele_excl = int(10 / self.system.dele) if hasattr(self, 'system') else 10
         azi_excl = int(10 / self.system.dazi) if hasattr(self, 'system') else 10
 
@@ -348,13 +332,8 @@ class AntennaArray:
         azi_end = min(FF_I_dB.shape[1], main_idx[1] + azi_excl + 1)
         main_lobe_mask[ele_start:ele_end, azi_start:azi_end] = True
 
-        # Side lobe region: dentro FoV ma fuori main lobe
         sidelobe_mask = self.in_fov_mask & ~main_lobe_mask
-
-        if np.any(sidelobe_mask):
-            sll_in = np.max(FF_I_dB[sidelobe_mask]) - G_boresight
-        else:
-            sll_in = -100
+        sll_in = np.max(FF_I_dB[sidelobe_mask]) - G_boresight if np.any(sidelobe_mask) else -100
 
         return sll_in, sll_out
 

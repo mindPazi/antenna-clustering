@@ -12,6 +12,47 @@ import torch.nn.functional as F
 from typing import Optional
 
 
+def scatter_add_native(
+    src: torch.Tensor,
+    index: torch.Tensor,
+    dim: int = 0,
+    dim_size: Optional[int] = None
+) -> torch.Tensor:
+    """
+    Native PyTorch implementation of scatter_add.
+
+    Sums values from src at indices specified by index along dimension dim.
+
+    Args:
+        src: Source tensor with values to scatter
+        index: Index tensor (same size as src along dim)
+        dim: Dimension along which to scatter
+        dim_size: Size of output along dim (default: max(index) + 1)
+
+    Returns:
+        Output tensor with scattered values
+    """
+    if dim_size is None:
+        dim_size = index.max().item() + 1 if index.numel() > 0 else 0
+
+    # Create output shape
+    shape = list(src.shape)
+    shape[dim] = dim_size
+    out = torch.zeros(shape, dtype=src.dtype, device=src.device)
+
+    # Expand index to match src shape
+    if src.dim() > 1:
+        # For multi-dimensional src, expand index
+        index_expanded = index.view(-1, *([1] * (src.dim() - 1)))
+        index_expanded = index_expanded.expand_as(src)
+    else:
+        index_expanded = index
+
+    out.scatter_add_(dim, index_expanded, src)
+
+    return out
+
+
 class GCNLayer(nn.Module):
     """
     Graph Convolutional Network layer.
@@ -68,11 +109,17 @@ class GCNLayer(nn.Module):
         Returns:
             out: (N, out_features) updated node features
         """
-        # TODO: Implement GCN forward pass
         # 1. Linear transform: XW
+        support = torch.mm(x, self.weight)
+
         # 2. Neighborhood aggregation: A_norm @ (XW)
+        out = torch.mm(adj_norm, support)
+
         # 3. Add bias
-        raise NotImplementedError
+        if self.bias is not None:
+            out = out + self.bias
+
+        return out
 
 
 class GATLayer(nn.Module):
@@ -141,33 +188,92 @@ class GATLayer(nn.Module):
         Returns:
             out: (N, heads * out_features) if concat else (N, out_features)
         """
-        # TODO: Implement GAT forward pass
-        # 1. Linear transform: Wh_i for all nodes
-        # 2. Compute attention coefficients: e_ij = LeakyReLU(a^T [Wh_i || Wh_j])
-        # 3. Normalize with softmax over neighbors: alpha_ij
-        # 4. Aggregate: h'_i = sum_j alpha_ij * Wh_j
-        # 5. Concatenate or average heads
-        raise NotImplementedError
+        N = x.shape[0]
+        H = self.heads
+        E = edge_index.shape[1]
 
-    def _compute_attention(
+        # Handle edge case of no edges
+        if E == 0:
+            # No message passing possible, just return transformed features
+            # Shape: (N, in_features) @ (H, in_features, out_features)
+            # Broadcast: (N, 1, in_features) @ (H, in_features, out_features) -> (N, H, out_features)
+            h = torch.einsum('ni,hio->nho', x, self.W)
+            if self.concat:
+                return h.view(N, H * self.out_features)
+            else:
+                return h.mean(dim=1)
+
+        # 1. Linear transform: Wh_i for all nodes
+        # x: (N, in_features), W: (H, in_features, out_features)
+        # h: (N, H, out_features)
+        h = torch.einsum('ni,hio->nho', x, self.W)
+
+        # 2. Compute attention coefficients
+        # Source and target attention scores
+        # a_l: (H, out_features, 1), h: (N, H, out_features)
+        # attn_l: (N, H)
+        attn_l = torch.einsum('nho,hol->nh', h, self.a_l).squeeze(-1)
+        attn_r = torch.einsum('nho,hol->nh', h, self.a_r).squeeze(-1)
+
+        # Get source and target indices
+        src, dst = edge_index[0], edge_index[1]
+
+        # Compute e_ij = LeakyReLU(a_l^T Wh_i + a_r^T Wh_j)
+        # e: (E, H)
+        e = attn_l[src] + attn_r[dst]
+        e = F.leaky_relu(e, negative_slope=self.negative_slope)
+
+        # 3. Normalize with softmax over neighbors
+        # Compute softmax per destination node
+        alpha = self._sparse_softmax(e, dst, N)
+
+        # Apply dropout to attention weights
+        alpha = F.dropout(alpha, p=self.dropout, training=self.training)
+
+        # 4. Aggregate: h'_i = sum_j alpha_ij * Wh_j
+        # h[src]: (E, H, out_features), alpha: (E, H)
+        # Weighted messages
+        msg = h[src] * alpha.unsqueeze(-1)  # (E, H, out_features)
+
+        # Aggregate at destination nodes
+        out = scatter_add_native(msg, dst, dim=0, dim_size=N)  # (N, H, out_features)
+
+        # 5. Concatenate or average heads
+        if self.concat:
+            out = out.view(N, H * self.out_features)
+        else:
+            out = out.mean(dim=1)
+
+        return out
+
+    def _sparse_softmax(
         self,
-        h_l: torch.Tensor,
-        h_r: torch.Tensor,
-        edge_index: torch.Tensor
+        e: torch.Tensor,
+        index: torch.Tensor,
+        num_nodes: int
     ) -> torch.Tensor:
         """
-        Compute attention coefficients for each edge.
+        Compute softmax over edges grouped by destination node.
 
         Args:
-            h_l: (N, heads, out_features) source node representations
-            h_r: (N, heads, out_features) target node representations
-            edge_index: (2, E) edges
+            e: (E, H) attention logits
+            index: (E,) destination node indices
+            num_nodes: N, total number of nodes
 
         Returns:
-            alpha: (E, heads) attention weights
+            alpha: (E, H) normalized attention weights
         """
-        # TODO: Implement attention computation
-        raise NotImplementedError
+        # Subtract global max for numerical stability
+        e_exp = torch.exp(e - e.max())
+
+        # Sum exp per destination
+        e_sum = scatter_add_native(e_exp, index, dim=0, dim_size=num_nodes)
+        e_sum = e_sum[index]
+
+        # Normalize
+        alpha = e_exp / (e_sum + 1e-8)
+
+        return alpha
 
 
 class EdgeConvLayer(nn.Module):
@@ -219,6 +325,27 @@ class EdgeConvLayer(nn.Module):
         Returns:
             out: (N, out_features) updated features
         """
-        # TODO: Implement edge-conditioned message passing
-        # h'_i = sum_j MLP([h_i || h_j || e_ij])
-        raise NotImplementedError
+        N = x.shape[0]
+        E = edge_index.shape[1]
+
+        if E == 0:
+            # No edges, return zero output
+            return torch.zeros(N, self.out_features, device=x.device)
+
+        src, dst = edge_index[0], edge_index[1]
+
+        # Get source and destination node features
+        x_src = x[src]  # (E, in_features)
+        x_dst = x[dst]  # (E, in_features)
+
+        # Concatenate node features with edge features
+        # [h_i || h_j || e_ij]
+        msg_input = torch.cat([x_src, x_dst, edge_attr], dim=1)  # (E, 2*in + edge)
+
+        # Apply MLP to compute messages
+        msg = self.mlp(msg_input)  # (E, out_features)
+
+        # Aggregate messages at destination nodes
+        out = scatter_add_native(msg, dst, dim=0, dim_size=N)  # (N, out_features)
+
+        return out

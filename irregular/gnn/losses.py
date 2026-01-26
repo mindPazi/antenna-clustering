@@ -34,10 +34,19 @@ def mincut_loss(
     Returns:
         loss: Scalar MinCut loss (negative, to be minimized)
     """
-    # TODO: Implement MinCut loss
     # Z^T A Z measures within-cluster edges
+    # (Z^T A Z)_kk = sum over edges where both endpoints assigned to cluster k
+    ztaz = torch.mm(torch.mm(z.T, adj), z)
+    numerator = torch.trace(ztaz)
+
     # Z^T D Z normalizes by cluster sizes
-    raise NotImplementedError
+    ztdz = torch.mm(torch.mm(z.T, deg), z)
+    denominator = torch.trace(ztdz)
+
+    # Negative because we want to maximize within-cluster edges
+    loss = -numerator / (denominator + eps)
+
+    return loss
 
 
 def orthogonality_loss(
@@ -59,9 +68,18 @@ def orthogonality_loss(
     Returns:
         loss: Scalar orthogonality loss
     """
-    # TODO: Implement orthogonality loss
-    # Z^T Z should be close to (N/K) * I_K for balanced clusters
-    raise NotImplementedError
+    n, k = z.shape
+
+    # Z^T Z / N: measures cluster overlap, should be diagonal
+    ztz = torch.mm(z.T, z) / n
+
+    # Target: I_K / K (identity scaled so trace = 1)
+    identity = torch.eye(k, device=z.device, dtype=z.dtype) / k
+
+    # Frobenius norm squared of difference
+    loss = torch.norm(ztz - identity, p='fro') ** 2
+
+    return loss
 
 
 def entropy_loss(
@@ -83,9 +101,16 @@ def entropy_loss(
     Returns:
         loss: Scalar mean entropy (negative for confident assignments)
     """
-    # TODO: Implement entropy loss
-    # Shannon entropy averaged over all nodes
-    raise NotImplementedError
+    n = z.shape[0]
+
+    # Shannon entropy: -sum z * log(z)
+    # Add eps for numerical stability with log
+    entropy = -torch.sum(z * torch.log(z + eps))
+
+    # Average over nodes
+    loss = entropy / n
+
+    return loss
 
 
 def cluster_size_loss(
@@ -105,8 +130,19 @@ def cluster_size_loss(
     Returns:
         loss: Scalar size variance loss
     """
-    # TODO: Implement cluster size regularization
-    raise NotImplementedError
+    n, k = z.shape
+
+    # Soft cluster sizes: sum of probabilities per cluster
+    sizes = z.sum(dim=0)  # (K,)
+
+    # Target size
+    if target_size is None:
+        target_size = n / k
+
+    # Variance from target size
+    loss = torch.var(sizes - target_size)
+
+    return loss
 
 
 def total_loss(

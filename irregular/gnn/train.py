@@ -10,12 +10,12 @@ Provides a Trainer class that handles:
 
 import torch
 import numpy as np
-from typing import Optional, Dict, Union, List
+from typing import Optional, Union, List
 from dataclasses import dataclass
 
 from .config import GNNConfig, GraphConfig, TrainingConfig
 from .model import AntennaClusteringGNN
-from .graph import GraphBuilder
+from .graph import GraphBuilder, normalized_adjacency
 from .losses import ClusteringLoss
 from .utils import normalize_positions, get_device
 
@@ -87,7 +87,6 @@ class Trainer:
 
         # Prepare data
         positions = self._prepare_positions(positions, device)
-        n_nodes = positions.shape[0]
 
         # Build graph
         self._build_graph(positions, coupling_matrix, device)
@@ -143,18 +142,20 @@ class Trainer:
         coupling_matrix: Optional[Union[np.ndarray, torch.Tensor]],
         device: torch.device
     ):
-        """Construct graph from positions."""
-        # TODO: Implement using GraphBuilder
-        # For now, create placeholder tensors
-        n = positions.shape[0]
+        """Construct graph from positions using GraphBuilder."""
+        # Build graph using GraphBuilder
+        edge_index, adj, deg, edge_attr = self.graph_builder.build_graph(
+            positions, coupling_matrix
+        )
 
-        # Placeholder edge_index (will be built by GraphBuilder)
-        self._edge_index = torch.zeros((2, 0), dtype=torch.long, device=device)
+        # Move to device
+        self._edge_index = edge_index.to(device)
+        self._adj = adj.to(device)
+        self._deg = deg.to(device)
+        self._edge_attr = edge_attr.to(device) if edge_attr is not None else None
 
-        # Placeholder adjacency and degree matrices
-        self._adj = torch.zeros((n, n), device=device)
-        self._deg = torch.zeros((n, n), device=device)
-        self._adj_norm = torch.zeros((n, n), device=device)
+        # Compute normalized adjacency for GCN layers
+        self._adj_norm = normalized_adjacency(self._adj, self._deg)
 
     def _train_loop(
         self,

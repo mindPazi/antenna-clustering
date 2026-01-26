@@ -169,8 +169,41 @@ def compute_clustering_metrics(
             - size_variance: Variance in cluster sizes
             - mean_intra_distance: Average within-cluster distance
     """
-    # TODO: Implement clustering metrics
-    raise NotImplementedError
+    if isinstance(assignments, torch.Tensor):
+        assignments = assignments.cpu().numpy()
+    if isinstance(positions, torch.Tensor):
+        positions = positions.cpu().numpy()
+
+    # Get cluster sizes
+    sizes = np.bincount(assignments)
+    num_clusters = np.sum(sizes > 0)
+
+    # Size variance
+    size_variance = np.var(sizes[sizes > 0])
+
+    # Mean intra-cluster distance
+    intra_distances = []
+    for k in range(len(sizes)):
+        mask = assignments == k
+        if np.sum(mask) > 1:
+            cluster_positions = positions[mask]
+            # Compute pairwise distances within cluster
+            n_cluster = cluster_positions.shape[0]
+            for i in range(n_cluster):
+                for j in range(i + 1, n_cluster):
+                    dist = np.linalg.norm(
+                        cluster_positions[i] - cluster_positions[j]
+                    )
+                    intra_distances.append(dist)
+
+    mean_intra_distance = np.mean(intra_distances) if intra_distances else 0.0
+
+    return {
+        "num_clusters": int(num_clusters),
+        "cluster_sizes": sizes.tolist(),
+        "size_variance": float(size_variance),
+        "mean_intra_distance": float(mean_intra_distance)
+    }
 
 
 def set_seed(seed: int):
