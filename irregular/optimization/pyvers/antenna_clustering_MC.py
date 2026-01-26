@@ -27,62 +27,109 @@ class SimulationConfig:
 
 @dataclass
 class ClusterConfig:
-    """Cluster configuration"""
-    Cluster_type: List[np.ndarray] = field(default_factory=list)
-    rotation_cluster: int = 0
+    """Cluster configuration for free-form clustering.
 
-    def __post_init__(self):
-        if not self.Cluster_type:
-            self.Cluster_type = [np.array([[0, 0], [0, 1]])]
+    Parameters:
+    - max_cluster_size: maximum number of elements in a cluster (1 to N).
+    - min_cluster_size: minimum number of elements in a cluster (default 1).
+    """
+    max_cluster_size: int = 3
+    min_cluster_size: int = 1
 
 
-class FullSubarraySetGeneration:
-    """Generate the complete set of possible subarrays"""
 
-    def __init__(self, cluster_type: np.ndarray, lattice: LatticeConfig,
-                 NN: np.ndarray, MM: np.ndarray, rotation_cluster: int = 0):
-        self.cluster_type = np.atleast_2d(cluster_type)
+class FreeFormSubarraySetGeneration:
+    """Generate ALL possible connected clusters (FREE FORM shapes).
+
+    This class generates every possible connected cluster of elements
+    from size min_size to max_size. Connectivity is 4-way (up/down/left/right).
+
+    For a 16x16 array with max_size=4, this generates ~6000 unique clusters.
+    """
+
+    def __init__(self, lattice: LatticeConfig, NN: np.ndarray, MM: np.ndarray,
+                 max_size: int = 4, min_size: int = 1):
         self.lattice = lattice
         self.NN = NN
         self.MM = MM
-        self.rotation_cluster = rotation_cluster
-        self.S, self.Nsub = self._generate()
+        self.max_size = max_size
+        self.min_size = min_size
 
-    def _generate(self):
-        B = self.cluster_type
-        A = np.sum(B, axis=0)
-        M = self.MM.flatten()
-        N = self.NN.flatten()
+        # Get array bounds
+        self.min_N = int(np.min(NN))
+        self.max_N = int(np.max(NN))
+        self.min_M = int(np.min(MM))
+        self.max_M = int(np.max(MM))
 
-        if A[0] == 0:
-            step_M = B.shape[0]
-            step_N = 1
-        elif A[1] == 0:
-            step_N = B.shape[0]
-            step_M = 1
-        else:
-            step_M = 1
-            step_N = 1
+        # Generate all connected clusters
+        self.S, self.Nsub = self._generate_all_connected()
 
+    def _get_neighbors(self, pos):
+        """Get 4-connected neighbors of a position (n, m)"""
+        n, m = pos
+        neighbors = []
+        # Up, Down, Left, Right
+        for dn, dm in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+            nn, nm = n + dn, m + dm
+            if self.min_N <= nn <= self.max_N and self.min_M <= nm <= self.max_M:
+                neighbors.append((nn, nm))
+        return neighbors
+
+    def _generate_all_connected(self):
+        """Generate all connected clusters using iterative expansion"""
+        all_clusters = set()  # Use set of frozensets for deduplication
+
+        # All valid positions in the array
+        all_positions = []
+        for n in range(self.min_N, self.max_N + 1):
+            for m in range(self.min_M, self.max_M + 1):
+                all_positions.append((n, m))
+
+        # Start with single elements
+        current_level = [frozenset([pos]) for pos in all_positions]
+
+        # Add single-element clusters if min_size <= 1
+        if self.min_size <= 1:
+            all_clusters.update(current_level)
+
+        # Iteratively expand to larger sizes
+        for size in range(2, self.max_size + 1):
+            next_level = set()
+
+            for cluster in current_level:
+                # Find all neighbors of the current cluster
+                cluster_neighbors = set()
+                for pos in cluster:
+                    for neighbor in self._get_neighbors(pos):
+                        if neighbor not in cluster:
+                            cluster_neighbors.add(neighbor)
+
+                # Try adding each neighbor
+                for neighbor in cluster_neighbors:
+                    new_cluster = frozenset(cluster | {neighbor})
+                    if new_cluster not in next_level and new_cluster not in all_clusters:
+                        next_level.add(new_cluster)
+
+            # Add clusters of this size if >= min_size
+            if size >= self.min_size:
+                all_clusters.update(next_level)
+
+            current_level = list(next_level)
+
+        # Convert to list of numpy arrays (sorted for consistency)
         S = []
-        min_M, max_M = int(np.min(M)), int(np.max(M))
-        min_N, max_N = int(np.min(N)), int(np.max(N))
+        for cluster_frozen in all_clusters:
+            cluster_list = sorted(list(cluster_frozen))  # Sort for consistency
+            cluster_array = np.array(cluster_list)
+            S.append(cluster_array)
 
-        for kk in range(min_M, max_M + 1, step_M):
-            for hh in range(min_N, max_N + 1, step_N):
-                Bshift = B.copy()
-                Bshift[:, 0] = B[:, 0] + hh
-                Bshift[:, 1] = B[:, 1] + kk
-
-                check = not np.any(
-                    (Bshift[:, 0] > max_N) | (Bshift[:, 0] < min_N) |
-                    (Bshift[:, 1] > max_M) | (Bshift[:, 1] < min_M)
-                )
-
-                if check:
-                    S.append(Bshift)
+        # Sort clusters by size then by first element for reproducibility
+        S.sort(key=lambda x: (x.shape[0], tuple(x[0])))
 
         return S, len(S)
+
+
+print("FreeFormSubarraySetGeneration class defined!")
 
 
 class IrregularClusteringMonteCarlo:
@@ -94,25 +141,24 @@ class IrregularClusteringMonteCarlo:
         self.cluster_config = cluster_config
         self.sim_config = sim_config
 
-        self.S_all = []
-        self.N_all = []
-        self.L = []
-
-        for bb, cluster_type in enumerate(cluster_config.Cluster_type):
-            gen = FullSubarraySetGeneration(
-                cluster_type, array.lattice, array.NN, array.MM,
-                cluster_config.rotation_cluster
-            )
-            self.S_all.append(gen.S)
-            self.N_all.append(gen.Nsub)
-            self.L.append(cluster_type.shape[0])
+        # Generate all possible connected clusters (FREE FORM)
+        print(f"[MC] Generating free-form clusters (size {cluster_config.min_cluster_size}-{cluster_config.max_cluster_size})...")
+        gen = FreeFormSubarraySetGeneration(
+            array.lattice, array.NN, array.MM,
+            max_size=cluster_config.max_cluster_size,
+            min_size=cluster_config.min_cluster_size
+        )
+        self.S_all = [gen.S]
+        self.N_all = [gen.Nsub]
+        self.L = [cluster.shape[0] for cluster in gen.S]
+        print(f"[MC] Generated {gen.Nsub} free-form clusters")
 
         self.simulation = []
         self.all_Cm = []
         self.all_Ntrans = []
         self.all_Nel = []
 
-        # OPT: Adaptive probability tracking
+        # Adaptive probability tracking
         self.total_clusters = sum(self.N_all)
         self._cluster_scores = np.ones(self.total_clusters)
         self._selection_counts = np.ones(self.total_clusters)
@@ -253,9 +299,9 @@ class IrregularClusteringMonteCarlo:
 
         return best_rows, best_Cm
 
-    def run(self, verbose: bool = True, use_optimizations: bool = True) -> Dict:
-        """Execute optimization"""
-        # FIX: Apply seed for reproducibility
+    def run(self, verbose: bool = True) -> Dict:
+        """Execute 3-phase optimization"""
+        # Apply seed for reproducibility
         if self.sim_config.random_seed is not None:
             np.random.seed(self.sim_config.random_seed)
 
@@ -263,11 +309,8 @@ class IrregularClusteringMonteCarlo:
 
         if verbose:
             print("=" * 60)
-            print("IRREGULAR CLUSTERING - MONTE CARLO OPTIMIZATION")
-            if use_optimizations:
-                print("  [OPTIMIZED MODE: greedy init + local search + adaptive]")
-            else:
-                print("  [ORIGINAL MODE: random sampling only]")
+            print("MONTE CARLO CLUSTERING OPTIMIZATION")
+            print(f"  3-Phase approach: Greedy → Random → Adaptive")
             print("=" * 60)
             print(f"Array: {self.array.lattice.Nz}x{self.array.lattice.Ny} = {self.array.Nel} elements")
             print(f"Iterations: {self.sim_config.Niter}")
@@ -282,23 +325,19 @@ class IrregularClusteringMonteCarlo:
                 pct = (ij_cont / self.sim_config.Niter) * 100
                 print(f"  [Progress: {ij_cont}/{self.sim_config.Niter} ({pct:.0f}%) | Best Cm: {best_Cm_so_far:.0f}]", end="\r")
 
-            # Cluster selection
-            # FIX: Clean logic without redundant branches
-            if use_optimizations:
-                if ij_cont <= 10:
-                    if verbose and ij_cont == 1:
-                        print("  >> Phase 1: Greedy initialization (iter 1-10)")
-                    Cluster, selected_rows = self._greedy_initialization()
-                elif ij_cont <= 50:
-                    if verbose and ij_cont == 11:
-                        print("\n  >> Phase 2: Random sampling (iter 11-50)")
-                    Cluster, selected_rows = self._select_random_clusters()
-                else:  # ij_cont > 50
-                    if verbose and ij_cont == 51:
-                        print("\n  >> Phase 3: Adaptive sampling (iter 51+)")
-                    Cluster, selected_rows = self._select_adaptive_clusters()
-            else:
+            # 3-Phase selection strategy
+            if ij_cont <= 10:
+                if verbose and ij_cont == 1:
+                    print("  >> Phase 1: Greedy initialization (iter 1-10)")
+                Cluster, selected_rows = self._greedy_initialization()
+            elif ij_cont <= 50:
+                if verbose and ij_cont == 11:
+                    print("\n  >> Phase 2: Random sampling (iter 11-50)")
                 Cluster, selected_rows = self._select_random_clusters()
+            else:
+                if verbose and ij_cont == 51:
+                    print("\n  >> Phase 3: Adaptive sampling (iter 51+)")
+                Cluster, selected_rows = self._select_adaptive_clusters()
 
             if len(Cluster) == 0:
                 self.all_Cm.append(float("inf"))
@@ -311,12 +350,12 @@ class IrregularClusteringMonteCarlo:
             Ntrans = result["Ntrans"]
             Nel_active = int(np.sum(result["Lsub"]))
 
-            # OPT: Local search: only every 10 iterations AND only if Cm < 80% of best so far
-            if use_optimizations and Cm < best_Cm_so_far * 0.8 and ij_cont % 10 == 0:
+            # Local search refinement (every 10 iterations if promising)
+            if Cm < best_Cm_so_far * 0.8 and ij_cont % 10 == 0:
                 old_Cm = Cm
                 selected_rows, Cm = self._local_search(selected_rows, Cm, max_iterations=10)
                 if verbose and Cm < old_Cm:
-                    print(f"\n  >> Local search: Cm {old_Cm} -> {Cm}")
+                    print(f"\n  >> Local search: Cm {old_Cm} → {Cm}")
                 Cluster = self._rows_to_clusters(selected_rows)
                 if len(Cluster) > 0:
                     result = self.array.evaluate_clustering(Cluster)
@@ -324,8 +363,8 @@ class IrregularClusteringMonteCarlo:
                     Ntrans = result["Ntrans"]
                     Nel_active = int(np.sum(result["Lsub"]))
 
-            if use_optimizations:
-                self._update_adaptive_scores(selected_rows, Cm)
+            # Update adaptive scores
+            self._update_adaptive_scores(selected_rows, Cm)
 
             self.all_Cm.append(Cm)
             self.all_Ntrans.append(Ntrans)
