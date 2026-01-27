@@ -1,29 +1,41 @@
 """
 GNN-based Antenna Array Clustering Module
 
-This module implements Graph Neural Networks for clustering Uniform Rectangular
-Arrays (URAs) using unsupervised learning with MinCut optimization.
-
-Architecture overview:
-    1. Graph Construction: Convert URA grid to 8-connected graph
-    2. GNN Layers: GAT with edge features (PyTorch Geometric)
-    3. Clustering Head: Soft assignment via softmax
-    4. Loss: MinCut + Orthogonality (no labels needed)
+Two training modes:
+    - train_ura_clustering(): Full physics-informed (may need tuning)
+    - train_ura_clustering_simple(): Simpler, more stable
 """
 
 from .config import URAConfig
-from .graph import create_ura_graph
+from .graph import create_ura_graph, compute_mutual_coupling
 from .model import URAClusteringGNN
-from .losses import mincut_loss, orthogonality_loss
-from .train import train_ura_clustering
+from .losses import (
+    mincut_loss,
+    orthogonality_loss,
+    coupling_mincut_loss,
+    balance_loss,
+    contiguity_loss,
+    entropy_loss,
+    anti_collapse_loss,
+    total_loss,
+)
+from .train import train_ura_clustering, train_ura_clustering_simple
 from .utils import assignments_to_antenna_format
 
 __all__ = [
     "URAConfig",
     "create_ura_graph",
+    "compute_mutual_coupling",
     "URAClusteringGNN",
     "mincut_loss",
     "orthogonality_loss",
+    "coupling_mincut_loss",
+    "balance_loss",
+    "contiguity_loss",
+    "entropy_loss",
+    "anti_collapse_loss",
+    "total_loss",
     "train_ura_clustering",
+    "train_ura_clustering_simple",
     "assignments_to_antenna_format",
 ]
