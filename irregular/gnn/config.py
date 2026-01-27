@@ -7,7 +7,7 @@ import numpy as np
 
 class URAConfig:
     """Configuration for Uniform Rectangular Array."""
-    def __init__(self, rows=16, cols=16, dx=0.5, dy=0.5, freq_ghz=10.0):
+    def __init__(self, rows=16, cols=16, dx=0.5, dy=0.7, freq_ghz=10.0):
         self.rows = rows
         self.cols = cols
         self.N = rows * cols  # Total elements: 256
