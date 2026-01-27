@@ -4,7 +4,9 @@
       "Bash(python:*)",
       "Bash(python3:*)",
       "Bash(powershell -Command \"[System.IO.File]::ReadAllText\\(''clustering_comparison.ipynb''\\).Substring\\(0, 100000\\)\")",
-      "Bash(dir /s /b /a:d __pycache__)"
+      "Bash(dir /s /b /a:d __pycache__)",
+      "Bash(del \"c:\\\\Users\\\\Andrea\\\\Desktop\\\\Huawei\\\\irregular\\\\gnn\\\\layers.py\")",
+      "Bash(pip install:*)"
     ]
   }
 }
