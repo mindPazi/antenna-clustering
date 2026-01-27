@@ -185,6 +185,15 @@ class AntennaArray:
         self.Mask_EA = np.full_like(self.ELE, self.G_boresight - SLL_level, dtype=float)
         self.Mask_EA[self.in_fov_mask] = self.G_boresight - SLLin
 
+    @staticmethod
+    def _lattice_indices(n: int) -> np.ndarray:
+        """
+        Reproduce the 1D lattice index convention used in _generate_lattice().
+        """
+        if n % 2 == 1:
+            return np.arange(-(n - 1) / 2, (n - 1) / 2 + 1)
+        return np.arange(-n / 2 + 1, n / 2 + 1)
+
     def index_to_position_cluster(self, Cluster: List[np.ndarray],
                                    ElementExc: Optional[np.ndarray] = None):
         if ElementExc is None:
@@ -199,11 +208,46 @@ class AntennaArray:
 
         min_NN = int(np.min(self.NN))
         min_MM = int(np.min(self.MM))
+        max_NN = int(np.max(self.NN))
+        max_MM = int(np.max(self.MM))
+
+        # Precompute lattice coordinate vectors for robust conversion.
+        N_vals = self._lattice_indices(self.lattice.Ny).astype(int)
+        M_vals = self._lattice_indices(self.lattice.Nz).astype(int)
 
         for kk, cluster in enumerate(Cluster):
+            # Accept both NN/MM lattice indices and 0-based [col,row] indices.
+            if cluster.size > 0:
+                nn_min = int(np.min(cluster[:, 0]))
+                nn_max = int(np.max(cluster[:, 0]))
+                mm_min = int(np.min(cluster[:, 1]))
+                mm_max = int(np.max(cluster[:, 1]))
+
+                is_zero_based = (
+                    0 <= nn_min and nn_max < self.lattice.Ny and
+                    0 <= mm_min and mm_max < self.lattice.Nz
+                )
+                is_lattice = (
+                    min_NN <= nn_min and nn_max <= max_NN and
+                    min_MM <= mm_min and mm_max <= max_MM
+                )
+
+                if is_zero_based and not is_lattice:
+                    # Map [col,row] -> [NN,MM] lattice coordinates.
+                    cols = cluster[:, 0].astype(int)
+                    rows = cluster[:, 1].astype(int)
+                    cluster = np.stack([N_vals[cols], M_vals[rows]], axis=1)
+
             for l1 in range(cluster.shape[0]):
                 Iy = int(cluster[l1, 0] - min_NN)
                 Iz = int(cluster[l1, 1] - min_MM)
+                if Iy < 0 or Iy >= self.lattice.Ny or Iz < 0 or Iz >= self.lattice.Nz:
+                    raise IndexError(
+                        "Cluster indices out of bounds after conversion: "
+                        f"(Iy, Iz)=({Iy}, {Iz}) for lattice (Ny, Nz)="
+                        f"({self.lattice.Ny}, {self.lattice.Nz}). "
+                        "Expected NN/MM lattice indices or 0-based [col,row]."
+                    )
                 Yc[l1, kk] = self.Y[Iz, Iy]
                 Zc[l1, kk] = self.Z[Iz, Iy]
                 Ac[l1, kk] = ElementExc[Iz, Iy]

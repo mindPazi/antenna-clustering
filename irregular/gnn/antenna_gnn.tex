@@ -112,64 +112,78 @@ The position of element $(m, n)$ where $m, n \in \{0, 1, \ldots, 15\}$ is:
 \begin{equation}
 \mathbf{p}_{m,n} = \begin{pmatrix} x_{m,n} \\ y_{m,n} \end{pmatrix} = \begin{pmatrix} m \cdot d_x \\ n \cdot d_y \end{pmatrix}
 \end{equation}
-where:
+where the horizontal and vertical spacings are \textbf{different}:
 \begin{itemize}
-    \item $d_x = $ horizontal spacing (e.g., $0.5\lambda$ or $0.7\lambda$)
-    \item $d_y = $ vertical spacing (e.g., $0.5\lambda$ or $0.7\lambda$)
+    \item $d_x = 0.5\lambda$ (horizontal spacing between columns)
+    \item $d_y = 0.7\lambda$ (vertical spacing between rows)
     \item $\lambda = c/f$ is the wavelength at operating frequency $f$
 \end{itemize}
 \end{mathbox}
 
 \begin{center}
-\begin{tikzpicture}[scale=0.7]
-    % Draw the 8x8 subset of array (for clarity)
-    \foreach \x in {0,1,2,3,4,5,6,7} {
-        \foreach \y in {0,1,2,3,4,5,6,7} {
-            \fill[blue!60] (\x*0.7, \y*0.7) circle (0.1);
+\begin{tikzpicture}[scale=0.8]
+    % Draw the 6x6 subset of array with different spacing
+    \foreach \x in {0,1,2,3,4,5} {
+        \foreach \y in {0,1,2,3,4,5} {
+            \fill[blue!60] (\x*0.6, \y*0.84) circle (0.1);
         }
     }
     
-    % Spacing annotations
-    \draw[<->, thick, red] (0, -0.4) -- (0.7, -0.4) node[midway, below] {$d_x$};
-    \draw[<->, thick, red] (-0.4, 0) -- (-0.4, 0.7) node[midway, left] {$d_y$};
+    % Spacing annotations - DIFFERENT in x and y
+    \draw[<->, thick, red] (0, -0.4) -- (0.6, -0.4) node[midway, below] {$d_x = 0.5\lambda$};
+    \draw[<->, thick, orange] (-0.5, 0) -- (-0.5, 0.84) node[midway, left] {$d_y = 0.7\lambda$};
     
     % Grid lines (light)
-    \foreach \x in {0,1,2,3,4,5,6,7} {
-        \draw[gray!30, thin] (\x*0.7, 0) -- (\x*0.7, 4.9);
+    \foreach \x in {0,1,2,3,4,5} {
+        \draw[gray!30, thin] (\x*0.6, 0) -- (\x*0.6, 4.2);
     }
-    \foreach \y in {0,1,2,3,4,5,6,7} {
-        \draw[gray!30, thin] (0, \y*0.7) -- (4.9, \y*0.7);
+    \foreach \y in {0,1,2,3,4,5} {
+        \draw[gray!30, thin] (0, \y*0.84) -- (3.0, \y*0.84);
     }
     
     % Labels
-    \node at (2.45, -1.2) {$16 \times 16$ Uniform Rectangular Array (URA)};
-    \node at (2.45, -1.8) {\footnotesize Showing $8 \times 8$ subset for clarity};
-    
-    % Element index example
-    \node[font=\tiny, above right] at (2.1, 2.1) {$(3,3)$};
-    \fill[red!80] (2.1, 2.1) circle (0.12);
+    \node at (1.5, -1.2) {$16 \times 16$ URA with non-square spacing};
+    \node at (1.5, -1.7) {\footnotesize $d_x \neq d_y$ (rectangular unit cell)};
     
 \end{tikzpicture}
 \end{center}
 
-\subsection{Typical Spacing Configurations}
+\begin{keyinsight}
+\textbf{Non-Square Unit Cell:} With $d_x = 0.5\lambda$ and $d_y = 0.7\lambda$, the array has a \textbf{rectangular} (not square) unit cell. This asymmetry affects:
+\begin{itemize}
+    \item Mutual coupling: horizontal neighbors are more strongly coupled than vertical
+    \item Beamforming: different scan ranges in azimuth vs.\ elevation
+    \item Clustering: the GNN must learn this asymmetry from the edge features
+\end{itemize}
+\end{keyinsight}
+
+\subsection{Your Specific Array Configuration}
 
 \begin{table}[h]
 \centering
-\caption{Common Inter-Element Spacing Values}
-\begin{tabular}{@{}ccp{7cm}@{}}
+\caption{Array Spacing Configuration: $d_x = 0.5\lambda$, $d_y = 0.7\lambda$}
+\begin{tabular}{@{}lcc@{}}
 \toprule
-\textbf{Spacing} & \textbf{Physical (at 10 GHz)} & \textbf{Characteristics} \\
+\textbf{Parameter} & \textbf{Horizontal ($x$)} & \textbf{Vertical ($y$)} \\
 \midrule
-$d = 0.5\lambda$ & 15 mm & Standard spacing. No grating lobes for $\theta \leq 90°$. Maximum unambiguous field of view. \\
-$d = 0.7\lambda$ & 21 mm & Wider aperture for same $N$. Higher directivity but grating lobes appear at $\theta > 45°$. More mutual coupling variation. \\
+Spacing & $d_x = 0.5\lambda$ & $d_y = 0.7\lambda$ \\
+Physical size (at 10 GHz) & 15 mm & 21 mm \\
+Array aperture & $15 \times 0.5\lambda = 7.5\lambda$ & $15 \times 0.7\lambda = 10.5\lambda$ \\
+Grating lobe onset & $\theta_x > 90°$ (none) & $\theta_y > 45°$ \\
+Adjacent coupling & Strong ($\approx -10$ dB) & Moderate ($\approx -15$ dB) \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\begin{keyinsight}
-\textbf{Important Clarification:} The array geometry is \textbf{fixed and regular}---elements sit on a perfect grid. The ``clustering problem'' is about \textbf{grouping these regularly-spaced elements} into subarrays for signal processing, beamforming, or hardware assignment. We are \textbf{not} optimizing element positions; we are partitioning a known grid structure.
-\end{keyinsight}
+\begin{warningbox}
+\textbf{Asymmetric Spacing Implications:}
+\begin{itemize}
+    \item Horizontal neighbors (same row) are \textbf{closer} ($0.5\lambda$) $\Rightarrow$ stronger mutual coupling
+    \item Vertical neighbors (same column) are \textbf{farther} ($0.7\lambda$) $\Rightarrow$ weaker coupling
+    \item The GNN edge features must encode this asymmetry: $(\Delta m \cdot d_x, \Delta n \cdot d_y)$
+    \item Clustering may naturally favor horizontal groupings due to stronger horizontal coupling
+\end{itemize}
+\end{warningbox}
 
 \subsection{What Do We Want?}
 
@@ -787,23 +801,25 @@ Now $\sum_{j \in \mathcal{N}(i)} \alpha_{ij} = 1$.
 For a URA with fixed spacing $d \in \{0.5\lambda, 0.7\lambda\}$, edge features encode the \textbf{relative position} and \textbf{electromagnetic coupling} between connected elements.
 \end{stepbox}
 
-\begin{mathbox}[Physics-Informed Edge Features for URA]
-For edge between elements $(m_1, n_1)$ and $(m_2, n_2)$:
+\begin{mathbox}[Physics-Informed Edge Features for Asymmetric URA]
+For edge between elements $(m_1, n_1)$ and $(m_2, n_2)$ with $d_x = 0.5\lambda$, $d_y = 0.7\lambda$:
 \begin{equation}
 \mathbf{e}_{(m_1,n_1) \to (m_2,n_2)} = \begin{pmatrix}
-\Delta m \\[0.3em]
-\Delta n \\[0.3em]
-d_{\text{grid}} / d \\[0.3em]
+\Delta x / \lambda \\[0.3em]
+\Delta y / \lambda \\[0.3em]
+r / \lambda \\[0.3em]
 |M_{ij}| \\[0.3em]
 \angle M_{ij}
 \end{pmatrix} = \begin{pmatrix}
-\text{Horizontal grid offset: } m_2 - m_1 \\[0.3em]
-\text{Vertical grid offset: } n_2 - n_1 \\[0.3em]
-\text{Normalized distance: } \sqrt{\Delta m^2 + \Delta n^2} \\[0.3em]
+(m_2 - m_1) \cdot 0.5 \\[0.3em]
+(n_2 - n_1) \cdot 0.7 \\[0.3em]
+\sqrt{(\Delta m \cdot 0.5)^2 + (\Delta n \cdot 0.7)^2} \\[0.3em]
 \text{Mutual coupling magnitude} \\[0.3em]
 \text{Mutual coupling phase}
 \end{pmatrix}
 \end{equation}
+
+\textbf{Key insight:} Horizontal neighbor $(\Delta m = 1, \Delta n = 0)$ has distance $0.5\lambda$, while vertical neighbor $(\Delta m = 0, \Delta n = 1)$ has distance $0.7\lambda$. The GNN learns to treat these differently!
 \end{mathbox}
 
 \subsubsection{Mutual Coupling in URAs}
@@ -825,20 +841,30 @@ where:
 \textbf{Key insight:} Elements at the same grid distance have similar (but not identical) coupling due to edge effects.
 \end{mathbox}
 
-\subsubsection{Edge Features by Spacing Configuration}
+\subsubsection{Edge Features by Neighbor Type}
 
 \begin{table}[h]
 \centering
-\caption{Coupling Characteristics for Different Spacings}
-\begin{tabular}{@{}cccc@{}}
+\caption{Coupling Characteristics for $d_x = 0.5\lambda$, $d_y = 0.7\lambda$}
+\begin{tabular}{@{}lccc@{}}
 \toprule
-\textbf{Spacing} & \textbf{Adjacent Coupling} & \textbf{Diagonal Coupling} & \textbf{Decay Rate} \\
+\textbf{Neighbor Type} & \textbf{Distance} & \textbf{Coupling} & \textbf{Edge Feature $r/\lambda$} \\
 \midrule
-$d = 0.5\lambda$ & Strong ($\approx -10$ dB) & Moderate ($\approx -15$ dB) & Fast \\
-$d = 0.7\lambda$ & Moderate ($\approx -15$ dB) & Weak ($\approx -22$ dB) & Slower \\
+Horizontal ($\Delta m = \pm 1$) & $0.5\lambda$ & Strong ($\approx -10$ dB) & 0.5 \\
+Vertical ($\Delta n = \pm 1$) & $0.7\lambda$ & Moderate ($\approx -15$ dB) & 0.7 \\
+Diagonal ($|\Delta m| = |\Delta n| = 1$) & $0.86\lambda$ & Weak ($\approx -20$ dB) & $\sqrt{0.5^2 + 0.7^2} \approx 0.86$ \\
 \bottomrule
 \end{tabular}
 \end{table}
+
+\begin{keyinsight}
+\textbf{Asymmetry Impact:} Because $d_x < d_y$, horizontal neighbors are more strongly coupled than vertical neighbors. The GNN will learn:
+\begin{itemize}
+    \item Elements in the same row have stronger relationships
+    \item Clustering may favor ``horizontal strips'' over ``vertical strips''
+    \item Diagonal connections are weaker than both horizontal and vertical
+\end{itemize}
+\end{keyinsight}
 
 The GNN learns to weight these edge features appropriately during training.
 
@@ -1169,49 +1195,51 @@ import numpy as np
 # ARRAY CONFIGURATION
 # =============================================================
 class URAConfig:
-    """Configuration for Uniform Rectangular Array."""
-    def __init__(self, rows=16, cols=16, dx=0.5, dy=0.5, freq_ghz=10.0):
+    """Configuration for Uniform Rectangular Array with asymmetric spacing."""
+    def __init__(self, rows=16, cols=16, dx=0.5, dy=0.7, freq_ghz=10.0):
         self.rows = rows
         self.cols = cols
         self.N = rows * cols  # Total elements: 256
-        self.dx = dx  # Horizontal spacing in wavelengths (0.5$\lambda$ or 0.7$\lambda$)
-        self.dy = dy  # Vertical spacing in wavelengths
+        # ASYMMETRIC SPACING: dx != dy
+        self.dx = dx  # Horizontal spacing = 0.5 lambda
+        self.dy = dy  # Vertical spacing = 0.7 lambda
         self.freq = freq_ghz * 1e9
         self.c = 3e8
         self.wavelength = self.c / self.freq
-        self.dx_meters = dx * self.wavelength
-        self.dy_meters = dy * self.wavelength
+        self.dx_meters = dx * self.wavelength  # 15 mm at 10 GHz
+        self.dy_meters = dy * self.wavelength  # 21 mm at 10 GHz
 
 # =============================================================
 # GRAPH CONSTRUCTION FOR REGULAR GRID
 # =============================================================
 def create_ura_graph(config, connectivity='8-connected'):
     """
-    Create graph from URA with fixed spacing.
+    Create graph from URA with ASYMMETRIC spacing (dx != dy).
     
     Args:
-        config: URAConfig object
+        config: URAConfig with dx=0.5, dy=0.7
         connectivity: '4-connected' or '8-connected'
     
     Returns:
-        positions: (N, 2) tensor of physical positions
+        positions: (N, 2) tensor of physical positions in wavelengths
         edge_index: (2, E) tensor of edges
-        edge_attr: (E, num_features) tensor of edge features
+        edge_attr: (E, num_features) edge features with PHYSICAL distances
     """
     rows, cols = config.rows, config.cols
+    dx, dy = config.dx, config.dy  # 0.5 and 0.7 lambda
     
-    # Generate grid positions (fixed spacing)
+    # Generate grid positions with DIFFERENT spacing in x and y
     m_indices = torch.arange(cols).float()
     n_indices = torch.arange(rows).float()
     mm, nn = torch.meshgrid(m_indices, n_indices, indexing='xy')
     
-    # Physical positions
+    # Physical positions (asymmetric!)
     positions = torch.stack([
-        mm.flatten() * config.dx,  # x in wavelengths
-        nn.flatten() * config.dy   # y in wavelengths
+        mm.flatten() * dx,  # x: 0, 0.5, 1.0, 1.5, ... (in lambda)
+        nn.flatten() * dy   # y: 0, 0.7, 1.4, 2.1, ... (in lambda)
     ], dim=1)  # Shape: (N, 2)
     
-    # Build edges based on grid connectivity
+    # Build edges with PHYSICAL distance features
     edges = []
     edge_features = []
     
@@ -1219,7 +1247,6 @@ def create_ura_graph(config, connectivity='8-connected'):
         for n in range(rows):
             idx = n * cols + m
             
-            # Define neighbor offsets
             if connectivity == '4-connected':
                 offsets = [(1, 0), (-1, 0), (0, 1), (0, -1)]
             else:  # 8-connected
@@ -1232,9 +1259,13 @@ def create_ura_graph(config, connectivity='8-connected'):
                     idx2 = n2 * cols + m2
                     edges.append([idx, idx2])
                     
-                    # Edge features: [dm, dn, normalized_distance]
-                    dist = np.sqrt(dm**2 + dn**2)
-                    edge_features.append([dm, dn, dist])
+                    # Edge features with ACTUAL physical distances
+                    delta_x = dm * dx  # Physical x-offset (in lambda)
+                    delta_y = dn * dy  # Physical y-offset (in lambda)
+                    phys_dist = np.sqrt(delta_x**2 + delta_y**2)
+                    
+                    # Features: [dx_physical, dy_physical, total_distance]
+                    edge_features.append([delta_x, delta_y, phys_dist])
     
     edge_index = torch.tensor(edges, dtype=torch.long).T
     edge_attr = torch.tensor(edge_features, dtype=torch.float)
@@ -1382,38 +1413,49 @@ def train_ura_clustering(config, num_clusters=4, epochs=500, lr=0.001):
 # EXAMPLE USAGE
 # =============================================================
 if __name__ == "__main__":
-    # Configuration 1: d = 0.5$\lambda$ spacing
-    config_05 = URAConfig(rows=16, cols=16, dx=0.5, dy=0.5)
-    print(f"Array size: {config_05.N} elements")
-    print(f"Spacing: {config_05.dx}$\lambda$ x {config_05.dy}$\lambda$")
+    # Your specific configuration: dx=0.5lambda, dy=0.7lambda
+    config = URAConfig(
+        rows=16, 
+        cols=16, 
+        dx=0.5,  # Horizontal: 0.5 lambda (closer, stronger coupling)
+        dy=0.7   # Vertical: 0.7 lambda (farther, weaker coupling)
+    )
     
-    clusters = train_ura_clustering(config_05, num_clusters=4)
-    print(f"Cluster sizes: {np.bincount(clusters)}")
+    print(f"Array size: {config.N} elements ({config.rows}x{config.cols})")
+    print(f"Horizontal spacing: {config.dx} lambda = {config.dx_meters*1000:.1f} mm")
+    print(f"Vertical spacing: {config.dy} lambda = {config.dy_meters*1000:.1f} mm")
+    print(f"Array aperture: {(config.cols-1)*config.dx:.1f} x "
+          f"{(config.rows-1)*config.dy:.1f} lambda")
     
-    # Configuration 2: d = 0.7$\lambda$ spacing  
-    config_07 = URAConfig(rows=16, cols=16, dx=0.7, dy=0.7)
-    clusters = train_ura_clustering(config_07, num_clusters=4)
-    print(f"Cluster sizes (0.7$\lambda$): {np.bincount(clusters)}")
+    # Train clustering
+    clusters = train_ura_clustering(config, num_clusters=4, epochs=400)
+    print(f"\nCluster sizes: {np.bincount(clusters)}")
+    
+    # Reshape to visualize on grid
+    cluster_grid = clusters.reshape(config.rows, config.cols)
+    print(f"\nCluster assignment grid (first 4 rows):")
+    print(cluster_grid[:4, :])
 \end{verbatim}
 
 \subsection{Hyperparameter Recommendations}
 
 \begin{table}[h]
 \centering
-\caption{Recommended Hyperparameters for $16 \times 16$ URA Clustering}
+\caption{Recommended Hyperparameters for $16 \times 16$ URA with $d_x = 0.5\lambda$, $d_y = 0.7\lambda$}
 \begin{tabular}{@{}llp{5.5cm}@{}}
 \toprule
 \textbf{Parameter} & \textbf{Value} & \textbf{Reasoning} \\
 \midrule
-\multicolumn{3}{@{}l}{\textit{Array Configuration}} \\
-Spacing $d_x, d_y$ & $0.5\lambda$ or $0.7\lambda$ & Fixed by hardware design \\
-Grid connectivity & 8-connected & Captures diagonal relationships \\
+\multicolumn{3}{@{}l}{\textit{Array Configuration (Fixed)}} \\
+Horizontal spacing $d_x$ & $0.5\lambda$ & Closer spacing, stronger coupling \\
+Vertical spacing $d_y$ & $0.7\lambda$ & Wider spacing, weaker coupling \\
+Grid connectivity & 8-connected & Captures all neighbor relationships \\
 \midrule
 \multicolumn{3}{@{}l}{\textit{GNN Architecture}} \\
 Hidden dim & 64--128 & Sufficient for 256 elements \\
 GAT heads & 4--8 & Multi-head attention for diverse patterns \\
 Layers & 2--3 & 2 layers $\Rightarrow$ 2-hop neighborhood \\
-Edge features & 3 & $[\Delta m, \Delta n, \text{distance}]$ \\
+Edge features & 3 & $[\Delta x, \Delta y, r]$ in wavelengths \\
 \midrule
 \multicolumn{3}{@{}l}{\textit{Training}} \\
 Learning rate & $10^{-3}$ & Standard for Adam optimizer \\
@@ -1426,10 +1468,11 @@ $\lambda_{\text{ortho}}$ & 1.0 & Equal weight to balance \\
 \end{table}
 
 \begin{keyinsight}
-\textbf{Spacing Impact on Clustering:}
+\textbf{Asymmetric Spacing Impact on Clustering:}
 \begin{itemize}
-    \item \textbf{$d = 0.5\lambda$:} Strong coupling between adjacent elements $\Rightarrow$ GNN naturally finds compact, contiguous clusters
-    \item \textbf{$d = 0.7\lambda$:} Weaker coupling $\Rightarrow$ more flexibility in cluster shapes, but may require more epochs to converge
+    \item Horizontal neighbors ($0.5\lambda$ apart) are more strongly coupled $\Rightarrow$ GNN may prefer horizontal groupings
+    \item Vertical neighbors ($0.7\lambda$ apart) are more weakly coupled $\Rightarrow$ easier to ``cut'' vertically
+    \item For balanced clusters, the orthogonality loss counteracts this natural bias
 \end{itemize}
 \end{keyinsight}
 
@@ -1439,16 +1482,16 @@ $\lambda_{\text{ortho}}$ & 1.0 & Equal weight to balance \\
 \section{Summary: The Complete Pipeline}
 
 \begin{keyinsight}
-\textbf{The GNN Clustering Pipeline for Fixed-Spacing URAs:}
+\textbf{The GNN Clustering Pipeline for URA with $d_x = 0.5\lambda$, $d_y = 0.7\lambda$:}
 \begin{enumerate}
-    \item \textbf{Define array geometry:} $16 \times 16$ URA with fixed spacing $d \in \{0.5\lambda, 0.7\lambda\}$
+    \item \textbf{Define array geometry:} $16 \times 16$ URA with \textbf{asymmetric} spacing ($d_x \neq d_y$)
     \item \textbf{Build graph:} Nodes = grid elements, Edges = 8-connected grid neighbors
     \item \textbf{Compute features:}
     \begin{itemize}
-        \item Node features: normalized grid positions $(m/15, n/15)$
-        \item Edge features: grid offset $(\Delta m, \Delta n)$, normalized distance
+        \item Node features: physical positions $(m \cdot 0.5\lambda, n \cdot 0.7\lambda)$
+        \item Edge features: \textbf{physical} offsets $(\Delta x, \Delta y, r)$ in wavelengths
     \end{itemize}
-    \item \textbf{Apply GNN layers:} GAT with edge features learns adaptive aggregation
+    \item \textbf{Apply GNN layers:} GAT learns that horizontal neighbors ($0.5\lambda$) differ from vertical ($0.7\lambda$)
     \item \textbf{Output:} Softmax over $K$ clusters
     \item \textbf{Train:} MinCut + Orthogonality loss (unsupervised)
     \item \textbf{Extract:} Hard assignments via $\arg\max$
@@ -1457,9 +1500,9 @@ $\lambda_{\text{ortho}}$ & 1.0 & Equal weight to balance \\
 \vspace{0.5em}
 \textbf{Key Properties:}
 \begin{itemize}
-    \item \ding{51} \textbf{Fixed geometry:} Array positions are NOT learned---only cluster assignments
-    \item \ding{51} \textbf{Grid-aware:} Connectivity respects the regular grid structure
-    \item \ding{51} \textbf{Spacing-agnostic:} Same architecture works for $0.5\lambda$ and $0.7\lambda$
+    \item \ding{51} \textbf{Fixed geometry:} Positions are NOT learned---only cluster assignments
+    \item \ding{51} \textbf{Asymmetry-aware:} Edge features encode $d_x = 0.5\lambda \neq d_y = 0.7\lambda$
+    \item \ding{51} \textbf{Grid structure:} Connectivity respects regular rectangular layout
     \item \ding{51} \textbf{Unsupervised:} No labeled data required
     \item \ding{51} \textbf{Scalable:} $O(N)$ complexity for grid graphs
     \item \ding{51} \textbf{Physics-informed:} Edge features can encode mutual coupling
@@ -1468,44 +1511,44 @@ $\lambda_{\text{ortho}}$ & 1.0 & Equal weight to balance \\
 
 \begin{center}
 \begin{tikzpicture}[scale=0.5]
-    % Input: Regular grid
+    % Input: Regular grid with asymmetric spacing
     \begin{scope}[xshift=0cm]
         \foreach \x in {0,1,2,3,4,5} {
             \foreach \y in {0,1,2,3,4,5} {
-                \fill[blue!40] (\x*0.6, \y*0.6) circle (0.08);
+                \fill[blue!40] (\x*0.5, \y*0.7) circle (0.08);
             }
         }
-        \node[font=\footnotesize] at (1.5, -0.8) {Input: URA};
-        \node[font=\tiny] at (1.5, -1.3) {$d = 0.5\lambda$ or $0.7\lambda$};
+        \node[font=\footnotesize] at (1.25, -0.8) {Input: URA};
+        \node[font=\tiny] at (1.25, -1.3) {$d_x{=}0.5\lambda$, $d_y{=}0.7\lambda$};
     \end{scope}
     
     % Arrow
-    \draw[->, very thick] (4, 1.5) -- (5.5, 1.5) node[midway, above, font=\footnotesize] {GNN};
+    \draw[->, very thick] (3.5, 1.5) -- (5, 1.5) node[midway, above, font=\footnotesize] {GNN};
     
-    % Output: Clustered grid
-    \begin{scope}[xshift=7cm]
+    % Output: Clustered grid (asymmetric)
+    \begin{scope}[xshift=6.5cm]
         \foreach \x in {0,1,2} {
             \foreach \y in {3,4,5} {
-                \fill[red!60] (\x*0.6, \y*0.6) circle (0.08);
+                \fill[red!60] (\x*0.5, \y*0.7) circle (0.08);
             }
         }
         \foreach \x in {3,4,5} {
             \foreach \y in {3,4,5} {
-                \fill[blue!60] (\x*0.6, \y*0.6) circle (0.08);
+                \fill[blue!60] (\x*0.5, \y*0.7) circle (0.08);
             }
         }
         \foreach \x in {0,1,2} {
             \foreach \y in {0,1,2} {
-                \fill[green!60!black] (\x*0.6, \y*0.6) circle (0.08);
+                \fill[green!60!black] (\x*0.5, \y*0.7) circle (0.08);
             }
         }
         \foreach \x in {3,4,5} {
             \foreach \y in {0,1,2} {
-                \fill[orange!70] (\x*0.6, \y*0.6) circle (0.08);
+                \fill[orange!70] (\x*0.5, \y*0.7) circle (0.08);
             }
         }
-        \node[font=\footnotesize] at (1.5, -0.8) {Output: $K=4$ Clusters};
-        \node[font=\tiny] at (1.5, -1.3) {Same grid, partitioned};
+        \node[font=\footnotesize] at (1.25, -0.8) {Output: $K{=}4$ Clusters};
+        \node[font=\tiny] at (1.25, -1.3) {Same grid, partitioned};
     \end{scope}
 \end{tikzpicture}
 \end{center}
@@ -1522,12 +1565,13 @@ $\lambda_{\text{ortho}}$ & 1.0 & Equal weight to balance \\
 \toprule
 \textbf{Symbol} & \textbf{Meaning} \\
 \midrule
-\multicolumn{2}{@{}l}{\textit{Array Geometry}} \\
+\multicolumn{2}{@{}l}{\textit{Array Geometry (Fixed)}} \\
 $N = 256$ & Number of antenna elements ($16 \times 16$) \\
 $(m, n)$ & Grid indices, $m, n \in \{0, 1, \ldots, 15\}$ \\
-$d_x, d_y$ & Inter-element spacing (e.g., $0.5\lambda$ or $0.7\lambda$) \\
+$d_x = 0.5\lambda$ & Horizontal inter-element spacing \\
+$d_y = 0.7\lambda$ & Vertical inter-element spacing \\
 $\lambda$ & Wavelength at operating frequency \\
-$\mathbf{p}_{m,n} = (m \cdot d_x, n \cdot d_y)$ & Physical position of element $(m,n)$ \\
+$\mathbf{p}_{m,n} = (m \cdot 0.5\lambda, n \cdot 0.7\lambda)$ & Physical position of element $(m,n)$ \\
 \midrule
 \multicolumn{2}{@{}l}{\textit{Graph Structure}} \\
 $\mathcal{G} = (\mathcal{V}, \mathcal{E})$ & Graph (vertices, edges) \\
@@ -1536,8 +1580,8 @@ $\mathbf{D} \in \mathbb{R}^{N \times N}$ & Degree matrix (diagonal) \\
 $\mathcal{N}(i)$ & Neighbors of node $i$ (4 or 8 connected) \\
 \midrule
 \multicolumn{2}{@{}l}{\textit{Features}} \\
-$\mathbf{x}_i \in \mathbb{R}^d$ & Node feature vector \\
-$\mathbf{e}_{ij} \in \mathbb{R}^{d_e}$ & Edge feature vector \\
+$\mathbf{x}_i \in \mathbb{R}^d$ & Node feature vector (position) \\
+$\mathbf{e}_{ij} = (\Delta x, \Delta y, r)$ & Edge features (physical offsets in $\lambda$) \\
 $M_{ij}$ & Mutual coupling between elements $i$ and $j$ \\
 \midrule
 \multicolumn{2}{@{}l}{\textit{GNN Variables}} \\
