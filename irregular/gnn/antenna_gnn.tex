@@ -1,0 +1,671 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb}
+\usepackage{geometry}
+\geometry{margin=2.5cm}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{caption}
+
+\lstset{
+  language=Python,
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{blue},
+  commentstyle=\color{gray},
+  breaklines=true,
+  frame=single,
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+}
+
+\title{GNN-Based Antenna Array Clustering\\[6pt]
+\large Cell-by-Cell Explanation of \texttt{gnn.ipynb}}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\newpage
+
+% ============================================================
+\section{Problem Statement}
+% ============================================================
+
+\subsection{What Is the Physical Setup?}
+
+We have a \textbf{Uniform Rectangular Array (URA)} of $16 \times 16 = 256$ antenna elements
+operating at $29.5\;\text{GHz}$ (millimeter-wave, 5G NR band).
+The elements are spaced $0.5\lambda$ apart horizontally and $0.7\lambda$ apart vertically,
+where $\lambda = c / f \approx 1.017\;\text{cm}$.
+
+In a phased array, each antenna element needs its own phase-shifter and RF chain.
+With 256 elements, this is expensive.
+\textbf{Clustering} (also called sub-arraying) groups nearby elements so that all elements
+in the same cluster share a single phase-shifter.
+This drastically reduces hardware cost: instead of 256 independent RF chains, we only need
+$K$ (e.g.\ 4, 32, 64, or 128).
+
+\subsection{What Do We Want to Optimize?}
+
+The goal is to partition the 256 elements into $K$ clusters such that:
+\begin{enumerate}[label=(\roman*)]
+    \item \textbf{Clusters are balanced}: each cluster has approximately $256/K$ elements.
+    \item \textbf{Clusters are spatially contiguous}: elements in the same cluster should be
+          physically close (not scattered across the array).
+    \item \textbf{Radiation performance is preserved}: the far-field pattern should maintain
+          high main-lobe gain, low side-lobe levels (SLL), and narrow beamwidths (HPBW).
+    \item \textbf{Cost function $C_m$ is minimized}: $C_m$ counts how many angular samples
+          in the far-field pattern exceed a prescribed SLL mask---ideally $C_m = 0$.
+\end{enumerate}
+
+\subsection{How Do We Optimize?}
+
+We use a \textbf{Graph Neural Network (GNN)} trained with \emph{unsupervised} loss functions.
+The 256 antennas become \emph{nodes} of a graph; edges connect physically adjacent elements.
+The GNN learns a soft assignment matrix $\mathbf{Z} \in \mathbb{R}^{N \times K}$ where $Z_{ik}$
+is the probability that element $i$ belongs to cluster $k$.
+Hard assignments are obtained by $\text{cluster}(i) = \arg\max_k Z_{ik}$.
+
+\subsection{Inputs and Outputs Summary}
+
+\begin{center}
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{p{3cm} p{10cm}}
+\toprule
+\textbf{Inputs} & 256 antenna positions on a $16\times16$ grid; spacing $d_x=0.5\lambda$,
+$d_y=0.7\lambda$; frequency $29.5\;\text{GHz}$; desired number of clusters $K$;
+beam steering direction $(\theta_0, \phi_0)$; SLL mask thresholds. \\
+\midrule
+\textbf{Optimization} & Unsupervised GNN minimizing a composite loss (MinCut + balance +
+entropy + anti-collapse + contiguity). No labelled data needed. \\
+\midrule
+\textbf{Outputs} & Cluster assignment vector $\mathbf{c} \in \{0,\dots,K{-}1\}^{256}$;
+far-field radiation pattern; performance metrics (gain, HPBW, SLL, $C_m$). \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\newpage
+% ============================================================
+\section{Cell-by-Cell Explanation}
+% ============================================================
+
+% ------------------------------------------------------------
+\subsection{Cell 0 --- Title (Markdown)}
+% ------------------------------------------------------------
+A markdown header declaring the notebook title:
+\emph{``GNN-based URA Clustering --- trains a Graph Neural Network to cluster a
+$16\times16$ antenna array.''}
+No code is executed.
+
+% ------------------------------------------------------------
+\subsection{Cell 1 --- Imports and Seeds}
+% ------------------------------------------------------------
+
+\textbf{What it does.}
+Imports the required libraries and sets random seeds for reproducibility.
+
+\begin{itemize}
+    \item \texttt{numpy} --- numerical arrays and linear algebra.
+    \item \texttt{torch} --- PyTorch deep learning framework (the GNN runs on PyTorch).
+    \item \texttt{matplotlib} --- all plots.
+    \item \texttt{sys.path.insert(0, '..')} --- adds the parent directory to Python's search
+          path so that the custom \texttt{gnn} package (which lives one level up) can be imported.
+    \item From the \texttt{gnn} package it imports:
+    \begin{itemize}
+        \item \texttt{URAConfig} --- a dataclass holding array geometry (rows, cols, spacing, frequency).
+        \item \texttt{create\_ura\_graph} --- builds a graph from the antenna grid (nodes = elements,
+              edges = neighbors), optionally with mutual-coupling edge weights.
+        \item \texttt{compute\_mutual\_coupling} --- computes an $N \times N$ complex coupling matrix
+              using a simplified analytical model: $M_{ij} = e^{-j2\pi r_{ij}} / (r_{ij} + 0.1)$
+              with edge/corner corrections.
+        \item \texttt{train\_ura\_clustering} --- full physics-informed training loop.
+        \item \texttt{train\_ura\_clustering\_simple} --- simplified, more stable training loop.
+        \item \texttt{assignments\_to\_antenna\_format} --- converts a flat cluster-label vector
+              into the list-of-coordinate-arrays format expected by the antenna physics engine.
+    \end{itemize}
+    \item Sets \texttt{torch.manual\_seed(42)} and \texttt{np.random.seed(42)} so that every run
+          produces the same results.
+\end{itemize}
+
+\textbf{Output.}
+Prints the PyTorch version (2.9.1+cpu) and whether CUDA is available (False---training runs on CPU).
+
+% ------------------------------------------------------------
+\subsection{Cell 2 --- Section Header (Markdown)}
+% ------------------------------------------------------------
+Markdown: ``\textbf{1.\ Configuration}''. No code.
+
+% ------------------------------------------------------------
+\subsection{Cell 3 --- Array Configuration}
+% ------------------------------------------------------------
+
+\textbf{What it does.}
+Creates a \texttt{URAConfig} object with the physical parameters of the antenna array:
+\begin{itemize}
+    \item \texttt{rows=16, cols=16} $\Rightarrow$ $N = 256$ elements.
+    \item \texttt{dx=0.5} $\Rightarrow$ horizontal spacing = $0.5\lambda$ ($\approx 5.08\;\text{mm}$).
+    \item \texttt{dy=0.7} $\Rightarrow$ vertical spacing = $0.7\lambda$ ($\approx 7.12\;\text{mm}$).
+    \item \texttt{freq\_ghz=29.5} $\Rightarrow$ $f = 29.5\;\text{GHz}$, hence
+          $\lambda = 3 \times 10^8 / 29.5 \times 10^9 \approx 1.017\;\text{cm}$.
+\end{itemize}
+Internally, \texttt{URAConfig} also computes \texttt{dx\_meters} and \texttt{dy\_meters}
+(physical spacing in meters).
+
+\textbf{Output.}
+\begin{verbatim}
+Array: 256 elements
+Spacing: dx=0.5 lambda, dy=0.7 lambda
+\end{verbatim}
+
+% ------------------------------------------------------------
+\subsection{Cell 4 --- Section Header (Markdown)}
+% ------------------------------------------------------------
+Markdown: ``\textbf{2.\ Train GNN} --- Using the simple training mode which is more stable.''
+
+% ------------------------------------------------------------
+\subsection{Cell 5 --- Train GNN (Simple Mode)}
+\label{sec:cell5}
+% ------------------------------------------------------------
+
+\textbf{What it does.}
+Trains the GNN to partition 256 antennas into $K=4$ clusters using the \emph{simple} training pipeline.
+This is the core optimization step.
+
+\paragraph{Inside \texttt{train\_ura\_clustering\_simple}:}
+\begin{enumerate}
+    \item \textbf{Graph construction} (\texttt{create\_ura\_graph} with \texttt{use\_coupling=False}).
+    \begin{itemize}
+        \item Each of the 256 antennas becomes a \emph{node}.
+              Its feature vector is its 2D position $(x, y)$ in wavelengths.
+        \item Edges connect each element to its 8 grid neighbors (8-connected).
+              Each edge carries a feature vector $[\Delta x, \Delta y, d]$ where $d$ is
+              the Euclidean distance between the two elements.
+        \item No mutual coupling is used in simple mode---edge weights are binary (connected or not).
+    \end{itemize}
+
+    \item \textbf{Position normalization.}
+          All $(x,y)$ coordinates are min-max normalized to $[0, 1]$.
+
+    \item \textbf{Model instantiation} (\texttt{URAClusteringGNN}).
+    \begin{itemize}
+        \item Architecture: \texttt{Linear(2$\to$32)} $\to$ \texttt{BatchNorm} $\to$ \texttt{ELU}
+              $\to$ \texttt{GATConv}$_1$(32$\to$32, 2 heads) $\to$ \texttt{BatchNorm} $\to$ \texttt{ELU}
+              $\to$ \texttt{GATConv}$_2$(64$\to$32, 2 heads) $\to$ \texttt{BatchNorm} $\to$ \texttt{ELU}
+              $\to$ \texttt{GATConv}$_3$(64$\to$32, 1 head) $\to$ \texttt{ELU}
+              $\to$ \texttt{Linear(32$\to K$)} $\to$ \texttt{Softmax}.
+        \item \texttt{GATConv} = Graph Attention Convolution. Each node aggregates features
+              from its neighbors using learned attention weights.
+              The attention mechanism lets the network learn which neighbors matter more.
+        \item The final softmax outputs $\mathbf{Z} \in \mathbb{R}^{256 \times 4}$:
+              a soft cluster-assignment matrix where $Z_{ik}$ is the probability that
+              antenna $i$ belongs to cluster $k$.
+    \end{itemize}
+
+    \item \textbf{Loss function} (what we minimize). Three terms:
+    \begin{enumerate}[label=\alph*)]
+        \item \textbf{MinCut loss} (weight 1.0):
+              \[
+                  \mathcal{L}_{\text{cut}} = -\frac{\text{tr}(\mathbf{Z}^\top \mathbf{A}\, \mathbf{Z})}
+                  {\text{tr}(\mathbf{Z}^\top \mathbf{D}\, \mathbf{Z})}
+              \]
+              where $\mathbf{A}$ is the adjacency matrix and $\mathbf{D} = \text{diag}(\mathbf{A}\,\mathbf{1})$
+              is the degree matrix.
+              Minimizing this encourages the network to place \emph{connected} nodes in the
+              \emph{same} cluster (i.e., minimize the number of edges cut between clusters).
+              This naturally produces spatially contiguous clusters.
+
+        \item \textbf{Balance loss} (weight 20.0 --- very high):
+              \[
+                  \mathcal{L}_{\text{bal}} = \frac{1}{N^2} \sum_{k=1}^{K}
+                  \left( \sum_{i=1}^{N} Z_{ik} - \frac{N}{K} \right)^2
+              \]
+              Penalizes deviation of each cluster's soft size from the target $N/K = 64$.
+              The high weight (20$\times$) forces nearly equal cluster sizes.
+
+        \item \textbf{Entropy loss} (weight 0.5):
+              \[
+                  \mathcal{L}_{\text{ent}} = -\frac{1}{N}\sum_{i=1}^{N}\sum_{k=1}^{K} Z_{ik} \log Z_{ik}
+              \]
+              Encourages \emph{confident} assignments (low entropy $\Rightarrow$ each node is
+              assigned to one cluster with high probability, not spread evenly).
+    \end{enumerate}
+
+    Total loss: $\mathcal{L} = \mathcal{L}_{\text{cut}} + 20 \cdot \mathcal{L}_{\text{bal}}
+    + 0.5 \cdot \mathcal{L}_{\text{ent}}$.
+
+    \item \textbf{Optimizer:} Adam with learning rate $0.01$, for 300 epochs.
+
+    \item \textbf{Output:} After training, hard assignments are extracted:
+          $\text{cluster}(i) = \arg\max_k Z_{ik}$.
+\end{enumerate}
+
+\textbf{Output.}
+\begin{verbatim}
+Epoch 100: Loss=-0.8988, Sizes=[66, 63, 64, 63]
+Epoch 200: Loss=-0.9024, Sizes=[65, 67, 64, 60]
+Epoch 300: Loss=-0.9032, Sizes=[66, 64, 67, 59]
+Cluster sizes: [64, 65, 66, 61]
+\end{verbatim}
+The loss is negative because $\mathcal{L}_{\text{cut}}$ is negative (we \emph{maximize}
+the normalized cut).
+Cluster sizes are very close to the ideal $64$ each, confirming that the balance loss works.
+
+% ------------------------------------------------------------
+\subsection{Cell 6 --- Section Header (Markdown)}
+% ------------------------------------------------------------
+Markdown: ``\textbf{3.\ Visualize Results}''.
+
+% ------------------------------------------------------------
+\subsection{Cell 7 --- Visualization}
+% ------------------------------------------------------------
+
+\textbf{What it does.}
+Creates two side-by-side plots:
+
+\begin{enumerate}
+    \item \textbf{Scatter plot} (left): each antenna element is a dot at its physical $(x,y)$
+          position, colored by cluster assignment.
+          The legend shows cluster sizes.
+          This shows the \emph{spatial layout} of the clustering---ideally, you see
+          4 contiguous colored regions.
+
+    \item \textbf{Grid view} (right): the cluster assignments reshaped into the $16 \times 16$ grid,
+          displayed as a color-coded image.
+          This is the ``bird's-eye view'' of which antenna belongs to which cluster.
+\end{enumerate}
+
+Also prints the $16 \times 16$ integer grid to the console.
+
+% ------------------------------------------------------------
+\subsection{Cell 8 --- Section Header (Markdown)}
+% ------------------------------------------------------------
+Markdown: ``\textbf{4.\ (Optional) Physics-Informed Training}''.
+
+% ------------------------------------------------------------
+\subsection{Cell 9 --- Train GNN (Physics-Informed Mode)}
+\label{sec:cell9}
+% ------------------------------------------------------------
+
+\textbf{What it does.}
+Trains the GNN using the \emph{full} physics-informed pipeline via \texttt{train\_ura\_clustering}.
+The key difference from Cell~5 is that this mode uses mutual coupling information.
+
+\paragraph{Differences from simple mode:}
+\begin{enumerate}
+    \item \textbf{Graph construction with coupling} (\texttt{use\_coupling=True}).
+    \begin{itemize}
+        \item The mutual coupling matrix $\mathbf{M} \in \mathbb{C}^{256 \times 256}$ is computed.
+              $M_{ij} = \frac{e^{-j2\pi r_{ij}}}{r_{ij} + 0.1} \times f_{\text{edge}}$
+              where $r_{ij}$ is the distance in wavelengths and $f_{\text{edge}}$ is a correction
+              factor (0.85$\times$ for edge elements, additional 0.9$\times$ for corners).
+        \item Edge features now have 4 components: $[\Delta x, \Delta y, d, |M_{ij}|]$.
+        \item The coupling-weighted adjacency $\mathbf{W} = |\mathbf{M}|$ replaces the binary
+              adjacency in the MinCut loss.
+    \end{itemize}
+
+    \item \textbf{Richer loss function} (5 terms):
+    \begin{enumerate}[label=\alph*)]
+        \item \textbf{Coupling MinCut} (weight 1.0): same formula as MinCut but uses $\mathbf{W}$
+              instead of $\mathbf{A}$. Elements with strong mutual coupling are encouraged to
+              be in the same cluster.
+        \item \textbf{Balance loss} (weight 10.0).
+        \item \textbf{Entropy loss} (weight 1.0).
+        \item \textbf{Anti-collapse loss} (weight 5.0): penalizes any cluster with
+              $<10\%$ or $>40\%$ of elements. Prevents degenerate solutions.
+        \item \textbf{Contiguity loss} (weight 0.1): for each cluster, computes the average
+              distance from assigned nodes to the cluster centroid. Encourages compact clusters.
+    \end{enumerate}
+
+    \item \textbf{Optimizer:} AdamW (lr=$0.001$, weight decay=$10^{-4}$) with cosine annealing
+          learning rate schedule, for 500 epochs.
+
+    \item \textbf{Gradient clipping:} max norm 1.0, for stability.
+
+    \item \textbf{Collapse detection:} if any cluster accumulates $>80\%$ of nodes during
+          training, a warning is printed and the best-balanced checkpoint is saved.
+
+    \item \textbf{Model:} same GATConv architecture but with \texttt{hidden\_dim=64},
+          \texttt{heads=4}, and \texttt{edge\_dim=4}.
+\end{enumerate}
+
+\textbf{Output.}
+\begin{verbatim}
+Epoch 100: Loss=0.4052 | Sizes=[93, 37, 45, 81]
+Epoch 500: Loss=0.4052 | Sizes=[81, 38, 46, 91]
+Physics-informed cluster sizes: [81, 38, 47, 90]
+\end{verbatim}
+The physics-informed mode produces \emph{unbalanced} clusters (sizes range from 38 to 90
+instead of the near-perfect 59--67 in simple mode).
+This is because the coupling-based loss competes with the balance loss:
+the coupling term wants to keep strongly-coupled elements together, which may
+create unequal groups.
+
+% ------------------------------------------------------------
+\subsection{Cell 10 --- Side-by-Side Comparison Plot}
+% ------------------------------------------------------------
+
+\textbf{What it does.}
+Creates two scatter plots side by side:
+\begin{itemize}
+    \item Left: simple mode clustering (balanced, quadrant-like).
+    \item Right: physics-informed clustering (unbalanced, coupling-driven shapes).
+\end{itemize}
+This visual comparison highlights the trade-off: simple mode guarantees balanced clusters,
+while physics-informed mode tries to respect electromagnetic coupling at the cost of balance.
+
+% ------------------------------------------------------------
+\subsection{Cell 11 --- Section Header (Markdown)}
+% ------------------------------------------------------------
+Markdown: ``\textbf{5.\ Radiation Pattern (if available)}''.
+
+% ------------------------------------------------------------
+\subsection{Cell 12 --- Radiation Pattern Evaluation}
+\label{sec:cell12}
+% ------------------------------------------------------------
+
+This is the largest and most important evaluation cell.
+It defines helper functions and then computes the far-field radiation pattern
+for both clusterings.
+
+\subsubsection{Helper function: \texttt{extract\_lobe\_metrics}}
+
+\textbf{Input:} 2D far-field pattern $\text{FF\_I\_dB}[\theta, \phi]$ in dBi, the
+azimuth/elevation angle vectors, the beam-steering direction $(\phi_0, \theta_0)$,
+and the boresight gain.
+
+\textbf{What it computes:}
+\begin{itemize}
+    \item Extracts the elevation cut (FF at fixed $\phi = \phi_0$) and azimuth cut
+          (FF at fixed $\theta = \theta_0$).
+    \item \textbf{HPBW} (Half-Power Beamwidth): finds the $-3\;\text{dB}$ crossing points
+          around the main lobe peak in both cuts.
+          Narrower HPBW means a more focused beam.
+    \item \textbf{SLL} (Side-Lobe Level): identifies all local maxima (via \texttt{scipy.find\_peaks})
+          that are $>3\;\text{dB}$ below the main lobe, and reports the highest one.
+          Lower SLL means less power wasted in unwanted directions.
+    \item \textbf{Number of lobes}: counts all peaks above $-30\;\text{dB}$.
+\end{itemize}
+
+\textbf{Output:} a dictionary with gain, HPBW, SLL, and lobe counts.
+
+\subsubsection{Helper function: \texttt{plot\_lobe\_analysis}}
+
+\textbf{Input:} the same pattern data plus the \texttt{AntennaArray} object.
+
+\textbf{What it plots} (6-panel figure):
+\begin{enumerate}
+    \item Elevation cut (Cartesian) with $-3\;\text{dB}$ line and SLL marker.
+    \item Azimuth cut (Cartesian) with $-3\;\text{dB}$ line and SLL marker.
+    \item 2D contour map of the full far-field pattern (azimuth vs.\ elevation), with
+          a star at the steering direction.
+    \item Summary table of all metrics.
+    \item Elevation pattern in polar coordinates.
+    \item Azimuth pattern in polar coordinates.
+\end{enumerate}
+
+\subsubsection{Helper function: \texttt{compute\_radiation}}
+
+\textbf{Input:} cluster assignments, number of clusters, grid shape, and a title string.
+
+\textbf{What it does (step by step):}
+\begin{enumerate}
+    \item \textbf{Format conversion} (\texttt{assignments\_to\_antenna\_format}):
+          converts the flat vector $[0, 2, 1, 3, \ldots]$ into a list of $K$ arrays,
+          each containing the lattice coordinates $(\text{NN}, \text{MM})$ of elements
+          in that cluster.
+          These lattice coordinates match the indexing convention used by the
+          antenna physics engine.
+
+    \item \textbf{Antenna array setup}: creates an \texttt{AntennaArray} object with:
+    \begin{itemize}
+        \item \texttt{LatticeConfig}: $16 \times 16$, spacing $(0.7\lambda, 0.5\lambda)$.
+        \item \texttt{SystemConfig}: $f = 29.5\;\text{GHz}$, beam steered to
+              $(\theta_0, \phi_0) = (0^\circ, 0^\circ)$, angular resolution
+              $\Delta\theta = \Delta\phi = 0.5^\circ$.
+        \item \texttt{MaskConfig}: SLL mask thresholds---defines the acceptable
+              side-lobe levels inside and outside the field of view.
+        \item \texttt{ElementPatternConfig}: $P=1$ means the element pattern is
+              $\cos(\theta)\cos(\phi)$, element gain $G_{\text{el}} = 5\;\text{dBi}$.
+    \end{itemize}
+
+    \item \textbf{Radiation pattern computation} (\texttt{evaluate\_clustering}):
+    \begin{enumerate}[label=\roman*)]
+        \item Converts cluster coordinates to physical positions $(Y_c, Z_c)$ in meters.
+        \item Computes cluster centroids $(Y_{c,m}, Z_{c,m})$.
+        \item Computes excitation coefficients:
+              $c_0^{(k)} = \frac{1}{L_k} \exp\!\bigl(-j(w_0 Z_{c,m}^{(k)} + v_0 Y_{c,m}^{(k)})\bigr)$
+              where $w_0, v_0$ encode the steering direction and $L_k$ is the cluster size.
+              Each cluster gets a single complex weight (amplitude $1/L_k$, phase for steering).
+        \item Computes the array factor via the kernel:
+              $\text{KerFF}(w,v) = \sum_{\text{elements}} F_{\text{el}}(w,v) \cdot e^{j(v \cdot Y + w \cdot Z)}$
+              summed per cluster, then combined as $\text{FF} = \text{KerFF} \cdot c_0^\top$.
+        \item Interpolates from $(w,v)$ spectral domain to $(\theta, \phi)$ angular domain.
+        \item Adds element pattern gain: $\text{FF\_I\_dB} = \text{FF\_norm\_dB} + G_{\text{el,max}} + 10\log_{10}(N_{\text{active}})$.
+        \item Computes $C_m$: counts how many angular samples exceed the SLL mask.
+        \item Computes SLL in-FoV and out-of-FoV (excluding a $\pm10^\circ$ main-lobe exclusion zone).
+    \end{enumerate}
+
+    \item \textbf{Plots} the 6-panel lobe analysis figure.
+\end{enumerate}
+
+\textbf{Output for GNN Simple} ($K=4$, beam at $0^\circ, 0^\circ$):
+$C_m = 471$, gain $= 29.08\;\text{dBi}$, SLL out $= -25.29\;\text{dB}$,
+SLL in $= -13.42\;\text{dB}$.
+
+\textbf{Output for GNN Physics-Informed}: $C_m = 443$, same gain,
+SLL out $= -24.31\;\text{dB}$, SLL in $= -13.81\;\text{dB}$.
+
+% ------------------------------------------------------------
+\subsection{Cell 13 --- Comparison Table}
+\label{sec:cell13}
+% ------------------------------------------------------------
+
+\textbf{What it does.}
+Prints a formatted table comparing Simple vs.\ Physics-Informed across all metrics.
+
+\begin{center}
+\small
+\begin{tabular}{lrr}
+\toprule
+\textbf{Metric} & \textbf{GNN Simple} & \textbf{Physics-Informed} \\
+\midrule
+Cluster sizes & [64, 65, 66, 61] & [81, 38, 47, 90] \\
+Size std dev & 1.9 & 22.0 \\
+\midrule
+Cost function $C_m$ & 471 & 443 \\
+Main lobe gain [dBi] & 29.08 & 29.08 \\
+HPBW elevation [deg] & 5.0 & 5.0 \\
+HPBW azimuth [deg] & 7.0 & 7.0 \\
+SLL out-of-FoV [dB] & $-25.29$ & $-24.31$ \\
+SLL in-FoV [dB] & $-13.42$ & $-13.81$ \\
+SLL elevation (rel) [dB] & 15.7 & 11.5 \\
+SLL azimuth (rel) [dB] & 15.7 & 15.3 \\
+Lobes (elevation) & 23 & 21 \\
+Lobes (azimuth) & 15 & 15 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Key observations:}
+\begin{itemize}
+    \item Both produce the same main-lobe gain (29.08 dBi) and beamwidths---clustering
+          does not affect the main beam at boresight.
+    \item Physics-informed has a \emph{lower} $C_m$ (443 vs.\ 471), meaning fewer mask violations.
+    \item But physics-informed has worse SLL out-of-FoV ($-24.31$ vs.\ $-25.29\;\text{dB}$)
+          and worse elevation SLL (11.5 vs.\ 15.7 dB below the main lobe).
+    \item The simple mode's perfectly balanced clusters produce more uniform side lobes.
+\end{itemize}
+
+\newpage
+% ============================================================
+\section{Test Cases (Cells 14--25)}
+% ============================================================
+
+The remaining cells implement 5 specific test cases to evaluate the GNN under different
+steering directions, cluster counts, and SLL constraints.
+All cases share:
+\begin{itemize}
+    \item $f = 29.5\;\text{GHz}$, element pattern $\cos(\theta)\cos(\phi)$ ($P=1$).
+    \item $N = 256$ ($16 \times 16$), spacing $d_y = 0.7\lambda$, $d_x = 0.5\lambda$.
+    \item GNN simple mode (300 epochs).
+\end{itemize}
+
+Each test case follows the \textbf{same pipeline}:
+\begin{enumerate}
+    \item Create \texttt{URAConfig} $\to$ train GNN $\to$ get cluster assignments.
+    \item Create \texttt{AntennaArray} with case-specific steering and mask.
+    \item Convert assignments $\to$ evaluate radiation $\to$ plot $\to$ print results.
+\end{enumerate}
+
+% ------------------------------------------------------------
+\subsection{Case 1: $\theta=10^\circ$, $\phi=0^\circ$, $K=128$, SLL $< -20\;\text{dB}$}
+% ------------------------------------------------------------
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Parameter} & \textbf{Value} \\
+\midrule
+Beam steering & elevation $\theta_0 = 10^\circ$, azimuth $\phi_0 = 0^\circ$ \\
+Number of clusters & $K = 128$ (cluster factor $= 256/128 = 2$ elements/cluster) \\
+SLL requirement & $< -20\;\text{dB}$ (both in-FoV and out-of-FoV) \\
+FoV mask & elevation $\pm30^\circ$, azimuth $\pm60^\circ$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{What happens.}
+With $K=128$ clusters, each cluster contains only $\approx 2$ elements on average.
+This is close to the no-clustering case (each element independent), so
+radiation performance should be near-optimal.
+The beam is steered $10^\circ$ off boresight in elevation.
+
+% ------------------------------------------------------------
+\subsection{Case 2: $\theta=0^\circ$, $\phi=60^\circ$, $K=128$, SLL $< -20\;\text{dB}$}
+% ------------------------------------------------------------
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Parameter} & \textbf{Value} \\
+\midrule
+Beam steering & elevation $\theta_0 = 0^\circ$, azimuth $\phi_0 = 60^\circ$ \\
+Number of clusters & $K = 128$ \\
+SLL requirement & $< -20\;\text{dB}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{What happens.}
+The beam is steered to $60^\circ$ in azimuth---an extreme angle near the edge of the
+field of view. This is the hardest steering case because the array factor degrades
+at wide scan angles and grating lobes may appear (especially with $d_x = 0.5\lambda$).
+
+% ------------------------------------------------------------
+\subsection{Case 3: $\theta=10^\circ$, $\phi=45^\circ$, $K=128$, SLL $< -20\;\text{dB}$}
+% ------------------------------------------------------------
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Parameter} & \textbf{Value} \\
+\midrule
+Beam steering & elevation $\theta_0 = 10^\circ$, azimuth $\phi_0 = 45^\circ$ \\
+Number of clusters & $K = 128$ (note: cluster factor stated as 4 in the heading,\\
+                    & but $256/128 = 2$; the heading is informational only) \\
+SLL requirement & $< -20\;\text{dB}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{What happens.}
+Diagonal steering---the beam points simultaneously off-axis in both elevation and azimuth.
+This combines the challenges of Cases 1 and 2.
+
+% ------------------------------------------------------------
+\subsection{Case 4: $\theta=10^\circ$, $\phi=45^\circ$, $K=64$, SLL $< -15\;\text{dB}$}
+% ------------------------------------------------------------
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Parameter} & \textbf{Value} \\
+\midrule
+Beam steering & elevation $\theta_0 = 10^\circ$, azimuth $\phi_0 = 45^\circ$ \\
+Number of clusters & $K = 64$ (cluster factor $= 256/64 = 4$ elements/cluster) \\
+SLL requirement & $< -15\;\text{dB}$ (relaxed) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{What happens.}
+With only 64 clusters (4 elements each), there is significantly less beamforming
+freedom. The SLL constraint is relaxed to $-15\;\text{dB}$ to account for this.
+This tests whether the GNN can produce a useful clustering even with high compression.
+
+% ------------------------------------------------------------
+\subsection{Case 5: Free Parameters, $K=32$}
+% ------------------------------------------------------------
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Parameter} & \textbf{Value} \\
+\midrule
+Beam steering & boresight $\theta_0 = 0^\circ$, $\phi_0 = 0^\circ$ \\
+Number of clusters & $K = 32$ (cluster factor $= 256/32 = 8$ elements/cluster) \\
+SLL requirement & $-20\;\text{dB}$ out-of-FoV, $-15\;\text{dB}$ in-FoV \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{What happens.}
+The most aggressive compression: only 32 clusters, each containing $\approx 8$ elements.
+Steering is at boresight (easiest case), so we can afford the compression.
+This represents the maximum hardware cost reduction ($32\times$ fewer RF chains
+compared to element-level control).
+
+\newpage
+% ============================================================
+\section{Summary}
+% ============================================================
+
+\begin{center}
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{p{2.5cm} p{10.5cm}}
+\toprule
+\textbf{Input} & A $16 \times 16$ antenna array at $29.5\;\text{GHz}$ with specified
+element spacing, beam steering direction, number of clusters $K$, and SLL mask. \\
+\midrule
+\textbf{What we optimize} & The assignment of 256 antenna elements into $K$ clusters,
+such that clusters are balanced, contiguous, and the resulting far-field radiation pattern
+meets the SLL requirements. \\
+\midrule
+\textbf{How} & A 3-layer Graph Attention Network (GAT) outputs soft cluster assignments
+$\mathbf{Z}$, trained unsupervised by minimizing a composite loss:
+normalized MinCut (group connected elements),
+balance (equal cluster sizes),
+and entropy (confident assignments).
+An optional physics-informed variant adds mutual coupling weights and contiguity/anti-collapse terms. \\
+\midrule
+\textbf{Output} & A cluster assignment vector $\mathbf{c} \in \{0,\dots,K{-}1\}^{256}$
+and the resulting far-field radiation pattern with metrics:
+boresight gain, HPBW, SLL (in/out of FoV), and cost function $C_m$. \\
+\midrule
+\textbf{Key result} & The simple GNN mode reliably produces balanced clusters with good
+SLL performance.
+The physics-informed mode achieves a lower $C_m$ (fewer mask violations) but at the
+cost of unbalanced clusters and degraded SLL in some cuts. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\end{document}
