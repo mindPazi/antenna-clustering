@@ -1,7 +1,7 @@
 {
   "algorithm": "monte_carlo_3phase",
   "n_valid_solutions": 18,
-  "execution_time": 543.0821754932404,
+  "execution_time": 399.05136156082153,
   "statistics": {
     "all_Cm": [
       952,

@@ -49,6 +49,10 @@ def assignments_to_antenna_format(assignments, grid_shape=(16, 16)):
     for k in range(num_clusters):
         flat_indices = np.where(assignments == k)[0]
 
+        # Skip empty clusters to avoid division by zero in evaluate_clustering
+        if len(flat_indices) == 0:
+            continue
+
         # Convert flat index to 2D grid indices
         # Assuming row-major (C) ordering: flat_idx = row * Ny + col
         rows = flat_indices // Ny
