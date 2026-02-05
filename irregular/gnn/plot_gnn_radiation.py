@@ -61,19 +61,12 @@ def extract_lobe_metrics(FF_I_dB, azi, ele, azi0, ele0, G_boresight=None):
     # Side Lobe Level (relative to main lobe)
     def find_sll_relative(cut, angles):
         max_val = np.max(cut)
-        max_idx = np.argmax(cut)
-
-        # Find peaks excluding main lobe region
         peaks, _ = find_peaks(cut)
-
-        # Filter peaks outside main lobe (-3dB region)
         threshold = max_val - 3
         side_peaks = [p for p in peaks if cut[p] < threshold]
-
         if side_peaks:
-            max_side = max(cut[p] for p in side_peaks)
-            return max_side  # Already relative (normalized pattern)
-        return -30  # Default if no side lobes found
+            return max(cut[p] for p in side_peaks)
+        return -30
 
     sll_ele_relative = find_sll_relative(ele_cut, ele)
     sll_azi_relative = find_sll_relative(azi_cut, azi)
@@ -96,7 +89,7 @@ def extract_lobe_metrics(FF_I_dB, azi, ele, azi0, ele0, G_boresight=None):
 
 
 def plot_lobe_analysis(FF_I_dB, antenna_array, G_boresight=None,
-                       title="Lobe Analysis", save_path=None):
+                       title="Lobe Analysis"):
     """
     Plot lobe analysis: elevation/azimuth cuts, 2D pattern, metrics table, polar plots.
     """
@@ -121,7 +114,7 @@ def plot_lobe_analysis(FF_I_dB, antenna_array, G_boresight=None,
     ax1.set_title(f"Elevation Cut (azi={azi0} deg)\nHPBW={metrics['hpbw_ele']:.1f} deg")
     ax1.legend(loc='upper right', fontsize=8)
     ax1.grid(True, alpha=0.3)
-    ax1.set_ylim([-25, 25])
+    ax1.set_ylim([-25, 30])
 
     # 2. Azimuth Cut with Lobes
     ax2 = fig.add_subplot(gs[0, 1])
@@ -134,11 +127,11 @@ def plot_lobe_analysis(FF_I_dB, antenna_array, G_boresight=None,
     ax2.set_title(f"Azimuth Cut (ele={ele0} deg)\nHPBW={metrics['hpbw_azi']:.1f} deg")
     ax2.legend(loc='upper right', fontsize=8)
     ax2.grid(True, alpha=0.3)
-    ax2.set_ylim([-25, 25])
+    ax2.set_ylim([-25, 30])
 
     # 3. 2D Pattern (contour)
     ax3 = fig.add_subplot(gs[0, 2])
-    levels = np.arange(-40, 5, 3)
+    levels = np.arange(-40, 35, 3)
     contour = ax3.contourf(antenna_array.AZI, antenna_array.ELE, FF_I_dB,
                            levels=levels, cmap='jet', extend='both')
     plt.colorbar(contour, ax=ax3, label='dB')
@@ -188,34 +181,21 @@ def plot_lobe_analysis(FF_I_dB, antenna_array, G_boresight=None,
     fig.suptitle(title, fontsize=14, fontweight='bold', y=1.02)
 
     plt.tight_layout()
-
-    if save_path:
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
-        print(f"Saved: {save_path}")
-
     plt.show()
     return metrics
 
 
-def plot_gnn_radiation_pattern(clusters, num_clusters, grid_shape=(16, 16)):
-    """
-    Compute FF_I_dB from GNN assignments and plot the radiation pattern.
-    """
-    # Convert GNN assignments to antenna format (col, row)
-    clusters_antenna = assignments_to_antenna_format(clusters, grid_shape=grid_shape)
-
-    # Antenna array configuration (same as clustering_comparison.ipynb)
-    lattice = LatticeConfig(Nz=16, Ny=16, dist_z=0.6, dist_y=0.53, lattice_type=1)
+def compute_radiation(cl, num_cl, grid_shape, title):
+    clusters_antenna = assignments_to_antenna_format(cl, grid_shape=grid_shape)
+    lattice = LatticeConfig(Nz=16, Ny=16, dist_z=0.7, dist_y=0.5, lattice_type=1)
     system = SystemConfig(freq=29.5e9, azi0=0, ele0=0, dele=0.5, dazi=0.5)
     mask = MaskConfig(elem=30, azim=60, SLL_level=20, SLLin=15)
     eef = ElementPatternConfig(P=1, Gel=5, load_file=0)
-
     array = AntennaArray(lattice, system, mask, eef)
     result_ff = array.evaluate_clustering(clusters_antenna)
-
-    return plot_lobe_analysis(
-        result_ff['FF_I_dB'],
-        array,
-        G_boresight=result_ff['G_boresight'],
-        title=f"GNN Radiation Pattern (K={num_clusters})"
-    )
+    lobe_metrics = plot_lobe_analysis(result_ff['FF_I_dB'], array,
+                                      G_boresight=result_ff['G_boresight'], title=title)
+    lobe_metrics['sll_in'] = result_ff['sll_in']
+    lobe_metrics['sll_out'] = result_ff['sll_out']
+    lobe_metrics['Cm'] = result_ff['Cm']
+    return lobe_metrics
