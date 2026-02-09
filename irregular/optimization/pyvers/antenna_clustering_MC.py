@@ -169,6 +169,12 @@ class IrregularClusteringMonteCarlo:
             for cluster in self._all_clusters_flat
         ]
 
+        # Pre-compute all element positions for coverage check
+        self._all_elements = set()
+        for n in range(int(np.min(array.NN)), int(np.max(array.NN)) + 1):
+            for m in range(int(np.min(array.MM)), int(np.max(array.MM)) + 1):
+                self._all_elements.add((n, m))
+
         self.simulation = []
         self.all_Cm = []
         self.all_Ntrans = []
@@ -177,6 +183,13 @@ class IrregularClusteringMonteCarlo:
         self.total_clusters = sum(self.N_all)
         self._cluster_scores = np.ones(self.total_clusters)
         self._selection_counts = np.ones(self.total_clusters)
+
+    def _fill_uncovered(self, valid_clusters, covered_elements):
+        """Add singleton clusters for any uncovered elements."""
+        uncovered = self._all_elements - covered_elements
+        for pos in uncovered:
+            valid_clusters.append(np.array([list(pos)]))
+        return valid_clusters
 
     def _remove_overlaps(self, selected_rows: np.ndarray):
         """Remove overlapping clusters using pre-computed element sets."""
@@ -194,6 +207,8 @@ class IrregularClusteringMonteCarlo:
                 valid_clusters.append(self._all_clusters_flat[idx])
                 covered_elements.update(cluster_elements)
 
+        valid_clusters = self._fill_uncovered(valid_clusters, covered_elements)
+
         return valid_clusters, valid_rows
 
     def _select_random_clusters(self):
@@ -208,7 +223,7 @@ class IrregularClusteringMonteCarlo:
         selected_rows = (np.random.random(self.total_clusters) < probs).astype(int)
         return self._remove_overlaps(selected_rows)
 
-    def _update_adaptive_scores(self, selected_rows: np.ndarray, Cm: int):
+    def _update_adaptive_scores(self, selected_rows: np.ndarray, Cm: float):
         """Update adaptive scores based on solution quality."""
         normalized_cm = Cm / self.sim_config.Cost_thr
         reward = np.exp(-normalized_cm)
@@ -238,14 +253,19 @@ class IrregularClusteringMonteCarlo:
         selected_rows = np.zeros(self.total_clusters, dtype=int)
         selected_rows[selected_indices] = 1
         selected_clusters = [self._all_clusters_flat[i] for i in selected_indices]
+        selected_clusters = self._fill_uncovered(selected_clusters, covered_elements)
 
         return selected_clusters, selected_rows
 
     def _rows_to_clusters(self, selected_rows: np.ndarray):
-        """Convert selection array to cluster list."""
-        return [self._all_clusters_flat[i] for i in np.where(selected_rows == 1)[0]]
+        """Convert selection array to cluster list, filling uncovered elements."""
+        clusters = [self._all_clusters_flat[i] for i in np.where(selected_rows == 1)[0]]
+        covered = set()
+        for idx in np.where(selected_rows == 1)[0]:
+            covered.update(self._cluster_elements[idx])
+        return self._fill_uncovered(clusters, covered)
 
-    def _local_search(self, selected_rows: np.ndarray, current_Cm: int,
+    def _local_search(self, selected_rows: np.ndarray, current_Cm: float,
                       max_iterations: int = 10):
         """Local search - flip single bits and check for improvement."""
         best_rows = selected_rows.copy()
@@ -365,6 +385,7 @@ class IrregularClusteringMonteCarlo:
                     "selected_rows": selected_rows.copy(),
                     "Cm": Cm,
                     "Ntrans": Ntrans,
+                    "clustering_factor": result["clustering_factor"],
                     "sll_in": result["sll_in"],
                     "sll_out": result["sll_out"],
                     "iteration": ij_cont,
@@ -385,8 +406,9 @@ class IrregularClusteringMonteCarlo:
             if self.simulation:
                 best_sol = min(self.simulation, key=lambda x: x["Cm"])
                 print(f"\nBEST SOLUTION:")
-                print(f"  Cm: {best_sol['Cm']}")
+                print(f"  Cm: {best_sol['Cm']:.2f}")
                 print(f"  Ntrans: {best_sol['Ntrans']}")
+                print(f"  Clustering factor: {best_sol['clustering_factor']:.2f}")
                 print(f"  SLL out: {best_sol['sll_out']:.2f} dB")
                 print(f"  SLL in: {best_sol['sll_in']:.2f} dB")
 

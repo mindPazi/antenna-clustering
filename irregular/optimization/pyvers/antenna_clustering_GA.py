@@ -31,6 +31,7 @@ class GAParams:
     crossover_rate: float = 0.8
     elite_size: int = 5
     random_seed: int = None
+    target_clustering_factor: float = 2.0
 
 
 class GeneticAlgorithmOptimizer:
@@ -66,6 +67,12 @@ class GeneticAlgorithmOptimizer:
             for cluster in self.all_subarrays
         ]
 
+        # Pre-compute all element positions for coverage check
+        self._all_elements = set()
+        for n in range(int(np.min(array.NN)), int(np.max(array.NN)) + 1):
+            for m in range(int(np.min(array.MM)), int(np.max(array.MM)) + 1):
+                self._all_elements.add((n, m))
+
         self.population = []
         self.best_individual = None
         self.elapsed_time = 0
@@ -77,6 +84,7 @@ class GeneticAlgorithmOptimizer:
             "best_sll_out": [],
             "best_sll_in": [],
             "best_n_clusters": [],
+            "best_clustering_factor": [],
             "diversity": [],
         }
 
@@ -98,6 +106,16 @@ class GeneticAlgorithmOptimizer:
 
         return valid_genes
 
+    def _fill_uncovered(self, clusters, genes):
+        """Add singleton clusters for any uncovered elements."""
+        covered = set()
+        for idx in np.where(genes == 1)[0]:
+            covered.update(self._cluster_elements[idx])
+        uncovered = self._all_elements - covered
+        for pos in uncovered:
+            clusters.append(np.array([list(pos)]))
+        return clusters
+
     def _create_random_genes(self) -> np.ndarray:
         """Create a random chromosome with no overlapping clusters."""
         genes = np.random.randint(0, 2, size=self.total_clusters)
@@ -106,6 +124,7 @@ class GeneticAlgorithmOptimizer:
     def _evaluate_genes(self, genes: np.ndarray) -> Dict:
         """Evaluate a chromosome using real physics. Assumes genes are already clean."""
         Cluster = [self.all_subarrays[i] for i in np.where(genes == 1)[0]]
+        Cluster = self._fill_uncovered(Cluster, genes)
 
         if len(Cluster) == 0:
             return {
@@ -116,8 +135,10 @@ class GeneticAlgorithmOptimizer:
         result = self.array.evaluate_clustering(Cluster)
         Cm = result["Cm"]
         n_clusters = result["Ntrans"]
-        hardware_penalty = (n_clusters / self.array.Nel) * 50
-        fitness = -Cm - hardware_penalty
+        cf = result["clustering_factor"]
+        target_cf = self.params.target_clustering_factor
+        cf_penalty = abs(cf - target_cf) * 50
+        fitness = -Cm - cf_penalty
 
         return {
             "valid": True,
@@ -126,6 +147,7 @@ class GeneticAlgorithmOptimizer:
             "sll_out": result["sll_out"],
             "sll_in": result["sll_in"],
             "n_clusters": n_clusters,
+            "clustering_factor": cf,
         }
 
     def initialize_population(self):
@@ -141,6 +163,7 @@ class GeneticAlgorithmOptimizer:
                 "sll_out": result["sll_out"],
                 "sll_in": result["sll_in"],
                 "n_clusters": result["n_clusters"],
+                "clustering_factor": result.get("clustering_factor", 0),
             })
 
     def _tournament_selection(self, tournament_size: int = 3) -> Dict:
@@ -203,6 +226,7 @@ class GeneticAlgorithmOptimizer:
             self.history["best_sll_out"].append(best["sll_out"])
             self.history["best_sll_in"].append(best["sll_in"])
             self.history["best_n_clusters"].append(best["n_clusters"])
+            self.history["best_clustering_factor"].append(best.get("clustering_factor", 0))
             self.history["diversity"].append(diversity)
 
             gen_time = time.time() - gen_start
@@ -210,9 +234,10 @@ class GeneticAlgorithmOptimizer:
             if verbose:
                 print(
                     f"Gen {generation+1:3d}/{self.params.max_generations} | "
-                    f"Cm: {best['Cm']:4d} | "
+                    f"Cm: {best['Cm']:6.2f} | "
                     f"SLL_out: {best['sll_out']:6.2f} dB | "
                     f"Clusters: {best['n_clusters']:3d} | "
+                    f"CF: {best['clustering_factor']:.1f} | "
                     f"Time: {gen_time:.1f}s"
                 )
 
@@ -253,6 +278,7 @@ class GeneticAlgorithmOptimizer:
                         "sll_out": result["sll_out"],
                         "sll_in": result["sll_in"],
                         "n_clusters": result["n_clusters"],
+                        "clustering_factor": result.get("clustering_factor", 0),
                     })
 
             self.population = new_population
@@ -265,10 +291,11 @@ class GeneticAlgorithmOptimizer:
             print(f"\n{'='*60}")
             print("GA COMPLETE")
             print(f"{'='*60}")
-            print(f"Best Cm: {self.best_individual['Cm']}")
+            print(f"Best Cm: {self.best_individual['Cm']:.2f}")
             print(f"SLL out: {self.best_individual['sll_out']:.2f} dB")
             print(f"SLL in: {self.best_individual['sll_in']:.2f} dB")
             print(f"Number of clusters: {self.best_individual['n_clusters']}")
+            print(f"Clustering factor: {self.best_individual.get('clustering_factor', 0):.2f}")
             print(f"Total time: {self.elapsed_time:.1f}s")
 
         return self.best_individual

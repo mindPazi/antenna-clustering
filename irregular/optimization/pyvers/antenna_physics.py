@@ -350,10 +350,15 @@ class AntennaArray:
 
         return FF_norm_dB, FF_I_dB, KerFF_sub, np.abs(FF_norm_2D) ** 2
 
-    def compute_cost_function(self, FF_I_dB: np.ndarray) -> int:
+    def compute_cost_function(self, FF_I_dB: np.ndarray, n_peaks: int = 10) -> float:
         Constr = FF_I_dB - self.Mask_EA
-        Cm = np.sum(Constr > 0)
-        return int(Cm)
+        violations = Constr[Constr > 0]
+        if len(violations) == 0:
+            return 0.0
+        top_k = min(n_peaks, len(violations))
+        top_violations = np.sort(violations)[-top_k:]
+        Cm = float(np.mean(top_violations))
+        return Cm
 
     def compute_sll(self, FF_I_dB: np.ndarray, G_boresight: float = None):
         """FIX: Trova vero side lobe escludendo regione main lobe."""
@@ -412,6 +417,8 @@ class AntennaArray:
         SL_maxpointing = G_boresight - FF_I_dB[max_idx]
         SL_theta_phi = G_boresight - FF_I_dB[Iele, Iazi]
 
+        clustering_factor = self.Nel / Ntrans
+
         return {
             "Yc": Yc, "Zc": Zc, "Ac": Ac, "Yc_m": Yc_m, "Zc_m": Zc_m,
             "Lsub": Lsub, "Ntrans": Ntrans, "c0": c0,
@@ -420,4 +427,5 @@ class AntennaArray:
             "theta_max": theta_max, "phi_max": phi_max,
             "SL_maxpointing": SL_maxpointing, "SL_theta_phi": SL_theta_phi,
             "G_boresight": G_boresight,
+            "clustering_factor": clustering_factor,
         }
