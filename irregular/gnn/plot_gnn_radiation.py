@@ -9,14 +9,7 @@ from scipy.signal import find_peaks
 # Add antenna physics utilities to path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "optimization" / "pyvers"))
 
-from antenna_physics import (
-    LatticeConfig,
-    SystemConfig,
-    MaskConfig,
-    ElementPatternConfig,
-    AntennaArray,
-)
-from gnn import assignments_to_antenna_format
+from antenna_physics import AntennaArray
 
 
 def extract_lobe_metrics(FF_I_dB, azi, ele, azi0, ele0, G_boresight=None):
@@ -183,19 +176,3 @@ def plot_lobe_analysis(FF_I_dB, antenna_array, G_boresight=None,
     plt.tight_layout()
     plt.show()
     return metrics
-
-
-def compute_radiation(cl, num_cl, grid_shape, title):
-    clusters_antenna = assignments_to_antenna_format(cl, grid_shape=grid_shape)
-    lattice = LatticeConfig(Nz=16, Ny=16, dist_z=0.7, dist_y=0.5, lattice_type=1)
-    system = SystemConfig(freq=29.5e9, azi0=0, ele0=0, dele=0.5, dazi=0.5)
-    mask = MaskConfig(elem=30, azim=60, SLL_level=20, SLLin=15)
-    eef = ElementPatternConfig(P=1, Gel=5, load_file=0)
-    array = AntennaArray(lattice, system, mask, eef)
-    result_ff = array.evaluate_clustering(clusters_antenna)
-    lobe_metrics = plot_lobe_analysis(result_ff['FF_I_dB'], array,
-                                      G_boresight=result_ff['G_boresight'], title=title)
-    lobe_metrics['sll_in'] = result_ff['sll_in']
-    lobe_metrics['sll_out'] = result_ff['sll_out']
-    lobe_metrics['Cm'] = result_ff['Cm']
-    return lobe_metrics

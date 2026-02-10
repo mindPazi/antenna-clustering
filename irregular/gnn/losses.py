@@ -1,81 +1,17 @@
 """
 Loss functions for unsupervised GNN clustering.
-
-ROBUST implementation that prevents cluster collapse.
 """
 
 import torch
 import torch.nn.functional as F
 
 
-def mincut_loss(z, adj, deg):
-    """
-    Normalized MinCut loss for graph clustering.
-    """
-    num = torch.trace(z.T @ adj @ z)
-    denom = torch.trace(z.T @ deg @ z) + 1e-8
-    return -num / denom
-
-
-def orthogonality_loss(z):
-    """Alias for balance_loss."""
-    return balance_loss(z)
-
-
-def balance_loss(z):
-    """
-    Encourage balanced cluster sizes.
-    
-    STRONG version that really forces equal sizes.
-    """
-    n, k = z.shape
-    # Target: each cluster should have n/k elements
-    cluster_sizes = z.sum(dim=0)  # (K,)
-    target_size = n / k
-    
-    # L2 penalty on deviation from target
-    size_diff = cluster_sizes - target_size
-    return (size_diff ** 2).sum() / (n ** 2)
-
-
-def entropy_loss(z):
-    """
-    Encourage confident (non-uniform) assignments.
-    
-    High entropy = uncertain assignments (bad)
-    Low entropy = confident assignments (good)
-    """
-    # Per-node entropy
-    eps = 1e-8
-    entropy = -(z * torch.log(z + eps)).sum(dim=1)  # (N,)
-    return entropy.mean()
-
-
-def anti_collapse_loss(z):
-    """
-    CRITICAL: Prevent all nodes going to one cluster.
-    
-    Penalizes if any cluster has < 10% or > 40% of nodes.
-    """
-    n, k = z.shape
-    cluster_sizes = z.sum(dim=0)  # (K,)
-    
-    # Penalize clusters that are too small
-    min_size = 0.1 * n  # At least 10% of nodes
-    too_small = F.relu(min_size - cluster_sizes)
-    
-    # Penalize clusters that are too large  
-    max_size = 0.4 * n  # At most 40% of nodes
-    too_large = F.relu(cluster_sizes - max_size)
-    
-    return (too_small.sum() + too_large.sum()) / n
-
-
 def coupling_mincut_loss(z, W):
     """
     MinCut loss using coupling-weighted adjacency.
-    
-    NOTE: This is kept for compatibility but balance_loss is more important.
+
+    Minimizes inter-cluster coupling: groups mutually coupled
+    antenna elements into the same cluster.
     """
     D = torch.diag(W.sum(dim=1))
     num = torch.trace(z.T @ W @ z)
@@ -83,66 +19,108 @@ def coupling_mincut_loss(z, W):
     return -num / denom
 
 
-def contiguity_loss(z, positions):
+def clustering_factor_loss(z, target_cf):
     """
-    Penalize fragmented clusters.
-    
-    Simplified version that's more stable.
+    Target a specific clustering factor (avg elements per cluster).
+
+    CF = N / n_active_clusters.  The loss penalizes deviation of
+    the number of active clusters from N / target_cf.
     """
     n, k = z.shape
-    
-    # Compute cluster centroids
+    cluster_sizes = z.sum(dim=0)  # (K,) soft sizes
+
+    # Soft count of active clusters
+    active = torch.sigmoid(5.0 * (cluster_sizes - 0.5))
+    n_active = active.sum()
+
+    # Target number of active clusters
+    target_n = n / target_cf
+
+    # Relative squared error on cluster count
+    return ((n_active - target_n) / target_n) ** 2
+
+
+def entropy_loss(z):
+    """
+    Encourage confident (non-uniform) assignments.
+
+    High entropy = uncertain assignments (bad).
+    Low entropy = confident assignments (good).
+    """
+    eps = 1e-8
+    entropy = -(z * torch.log(z + eps)).sum(dim=1)  # (N,)
+    return entropy.mean()
+
+
+def balance_loss(z, target_cf):
+    """
+    Penalize imbalanced cluster sizes.
+
+    Each active cluster should have approximately *target_cf* elements.
+    The loss is the normalised variance of the active soft-cluster sizes.
+    """
+    cluster_sizes = z.sum(dim=0)  # (K,) soft sizes
+
+    # Consider a cluster "active" when its soft size exceeds 0.5
+    active_mask = cluster_sizes > 0.5
+    active_sizes = cluster_sizes[active_mask]
+
+    if active_sizes.numel() <= 1:
+        return torch.tensor(0.0, device=z.device)
+
+    # Penalize deviation of each active cluster size from target_cf
+    return ((active_sizes - target_cf) ** 2).mean() / (target_cf ** 2)
+
+
+def contiguity_loss(z, positions):
+    """
+    Penalize fragmented clusters by encouraging spatial compactness.
+    """
+    n, k = z.shape
+
     cluster_sizes = z.sum(dim=0, keepdim=True).T + 1e-8  # (K, 1)
     centroids = (z.T @ positions) / cluster_sizes  # (K, 2)
-    
-    # Average distance from each node to its cluster centroid
-    loss = 0.0
-    for cluster in range(k):
-        z_k = z[:, cluster]  # (N,)
-        centroid = centroids[cluster]  # (2,)
-        
-        # Distance to centroid
-        dist_to_centroid = ((positions - centroid) ** 2).sum(dim=1)  # (N,)
-        
-        # Weighted by assignment probability
-        loss += (z_k * dist_to_centroid).sum() / (z_k.sum() + 1e-8)
-    
-    return loss / k
+
+    # Weighted average distance from each node to its cluster centroid
+    # Vectorised: dist[i,k] = ||pos_i - centroid_k||^2
+    # loss = sum_k  (z[:,k] . dist[:,k]) / size_k
+    diff = positions.unsqueeze(1) - centroids.unsqueeze(0)  # (N, K, 2)
+    dist_sq = (diff ** 2).sum(dim=2)  # (N, K)
+    weighted = (z * dist_sq).sum(dim=0)  # (K,)
+    per_cluster = weighted / cluster_sizes.squeeze()  # (K,)
+
+    return per_cluster.mean()
 
 
-def total_loss(z, W, positions, lambda_balance=10.0, lambda_entropy=1.0, 
-               lambda_anti_collapse=5.0, lambda_contiguity=0.1):
+def total_loss(z, W, positions, target_cf=3.0,
+               lambda_cf=10.0, lambda_entropy=0.5,
+               lambda_contiguity=0.5, lambda_balance=5.0):
     """
-    Combined loss function with STRONG regularization.
-    
-    Key insight: balance and anti-collapse losses must be STRONG
-    to prevent the GNN from putting everything in one cluster.
+    Combined loss for physics-informed clustering with target CF.
+
+    Components:
+      - coupling MinCut : group coupled elements together
+      - clustering factor: target the desired avg cluster size
+      - balance          : penalize imbalanced cluster sizes
+      - entropy          : encourage confident hard assignments
+      - contiguity       : spatial compactness
     """
-    # MinCut: keep coupled elements together
     loss_cut = coupling_mincut_loss(z, W)
-    
-    # Balance: STRONG - force equal cluster sizes
-    loss_bal = balance_loss(z)
-    
-    # Entropy: encourage confident assignments
+    loss_cf = clustering_factor_loss(z, target_cf)
+    loss_bal = balance_loss(z, target_cf)
     loss_ent = entropy_loss(z)
-    
-    # Anti-collapse: CRITICAL - prevent degenerate solutions
-    loss_collapse = anti_collapse_loss(z)
-    
-    # Contiguity: keep clusters spatially compact (mild)
     loss_cont = contiguity_loss(z, positions)
-    
-    total = (loss_cut + 
-             lambda_balance * loss_bal + 
-             lambda_entropy * loss_ent +
-             lambda_anti_collapse * loss_collapse +
-             lambda_contiguity * loss_cont)
-    
+
+    total = (loss_cut
+             + lambda_cf * loss_cf
+             + lambda_balance * loss_bal
+             + lambda_entropy * loss_ent
+             + lambda_contiguity * loss_cont)
+
     return total, {
         'cut': loss_cut.item(),
+        'cf': loss_cf.item(),
         'balance': loss_bal.item(),
         'entropy': loss_ent.item(),
-        'anti_collapse': loss_collapse.item(),
         'contiguity': loss_cont.item(),
     }
