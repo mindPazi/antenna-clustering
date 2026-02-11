@@ -12,6 +12,7 @@ from .losses import (
     clustering_factor_loss,
     contiguity_loss,
     entropy_loss,
+    allowed_sizes_loss,
     total_loss,
 )
 from .train import train_ura_clustering
@@ -26,6 +27,7 @@ __all__ = [
     "clustering_factor_loss",
     "contiguity_loss",
     "entropy_loss",
+    "allowed_sizes_loss",
     "total_loss",
     "train_ura_clustering",
     "assignments_to_antenna_format",

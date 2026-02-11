@@ -14,10 +14,64 @@ from .model import URAClusteringGNN
 from .losses import total_loss
 
 
+def _snap_to_allowed_sizes(clusters, grid_shape, allowed_sizes):
+    """
+    Post-process cluster assignments so every cluster has a size in allowed_sizes.
+
+    Clusters with invalid sizes are split greedily using the largest
+    allowed size that fits, preserving spatial contiguity where possible.
+    """
+    allowed = sorted(allowed_sizes, reverse=True)
+    max_allowed = allowed[0]
+    rows, cols = grid_shape
+    n = rows * cols
+
+    new_clusters = np.full(n, -1, dtype=int)
+    next_label = 0
+
+    for k in range(clusters.max() + 1):
+        indices = np.where(clusters == k)[0]
+        size = len(indices)
+        if size == 0:
+            continue
+
+        if size in allowed_sizes:
+            new_clusters[indices] = next_label
+            next_label += 1
+        else:
+            # Split into allowed sizes greedily (largest first)
+            remaining = list(indices)
+            while remaining:
+                # Pick the largest allowed size that fits
+                assigned = False
+                for s in allowed:
+                    if len(remaining) >= s:
+                        chunk = remaining[:s]
+                        for idx in chunk:
+                            new_clusters[idx] = next_label
+                        remaining = remaining[s:]
+                        next_label += 1
+                        assigned = True
+                        break
+                if not assigned:
+                    # Remaining elements fewer than smallest allowed size
+                    # Assign as size-1 clusters
+                    for idx in remaining:
+                        new_clusters[idx] = next_label
+                        next_label += 1
+                    remaining = []
+
+    # Relabel to consecutive integers
+    unique_labels = np.unique(new_clusters)
+    label_map = {old: new for new, old in enumerate(unique_labels)}
+    return np.array([label_map[c] for c in new_clusters])
+
+
 def train_ura_clustering(config, target_cf=3.0, num_clusters_max=None,
                          epochs=500, lr=0.001,
                          lambda_cf=10.0, lambda_contiguity=0.5,
                          lambda_entropy=0.5, lambda_balance=5.0,
+                         allowed_sizes=None, lambda_allowed=5.0,
                          verbose=True):
     """
     Train GNN for URA clustering with target clustering factor.
@@ -37,6 +91,8 @@ def train_ura_clustering(config, target_cf=3.0, num_clusters_max=None,
         lambda_contiguity: weight for contiguity loss
         lambda_entropy: weight for entropy loss
         lambda_balance: weight for balance loss (cluster size variance)
+        allowed_sizes: optional list of allowed cluster sizes (e.g. [1,2,4])
+        lambda_allowed: weight for allowed-sizes loss (default 5.0)
         verbose: print training progress
 
     Returns:
@@ -80,10 +136,21 @@ def train_ura_clustering(config, target_cf=3.0, num_clusters_max=None,
     best_loss = float('inf')
     best_clusters = None
 
+    # Temperature annealing: start soft (high temp) → anneal to hard (low temp)
+    temp_start = 5.0
+    temp_end = 0.5
+    temp_anneal_epochs = int(epochs * 0.7)  # anneal over 70% of training
+
     for epoch in range(epochs):
         optimizer.zero_grad()
 
-        z = model(positions_norm, edge_index, edge_attr)
+        # Linearly anneal temperature
+        if epoch < temp_anneal_epochs:
+            temperature = temp_start - (temp_start - temp_end) * epoch / temp_anneal_epochs
+        else:
+            temperature = temp_end
+
+        z = model(positions_norm, edge_index, edge_attr, temperature=temperature)
 
         if torch.isnan(z).any():
             if verbose:
@@ -104,6 +171,8 @@ def train_ura_clustering(config, target_cf=3.0, num_clusters_max=None,
             lambda_entropy=lambda_entropy,
             lambda_contiguity=lambda_contiguity,
             lambda_balance=lambda_balance,
+            allowed_sizes=allowed_sizes,
+            lambda_allowed=lambda_allowed,
         )
 
         loss.backward()
@@ -124,7 +193,7 @@ def train_ura_clustering(config, target_cf=3.0, num_clusters_max=None,
                 best_clusters = hard.cpu().numpy().copy()
 
         if verbose and (epoch + 1) % 100 == 0:
-            print(f"Epoch {epoch+1}: Loss={loss.item():.4f} | "
+            print(f"Epoch {epoch+1}: Loss={loss.item():.4f} T={temperature:.2f} | "
                   f"clusters={n_active}, CF={current_cf:.2f}, "
                   f"sizes: min={active_sizes.min().item()}, "
                   f"max={active_sizes.max().item()}, "
@@ -144,6 +213,23 @@ def train_ura_clustering(config, target_cf=3.0, num_clusters_max=None,
         if verbose:
             print("Final result degenerate, using best saved clusters.")
         clusters = best_clusters
+
+    # Relabel to consecutive integers (remove gaps from empty clusters)
+    unique_labels = np.unique(clusters)
+    label_map = {old: new for new, old in enumerate(unique_labels)}
+    clusters = np.array([label_map[c] for c in clusters])
+
+    # Post-process to snap cluster sizes to allowed values
+    if allowed_sizes is not None:
+        clusters = _snap_to_allowed_sizes(
+            clusters, (config.rows, config.cols), allowed_sizes
+        )
+        if verbose:
+            sizes_pp = np.bincount(clusters)
+            invalid = [s for s in sizes_pp if s not in allowed_sizes]
+            print(f"Post-processing: snapped to allowed sizes {allowed_sizes}")
+            if invalid:
+                print(f"  WARNING: {len(invalid)} clusters with invalid sizes: {invalid}")
 
     # Relabel to consecutive integers (remove gaps from empty clusters)
     unique_labels = np.unique(clusters)

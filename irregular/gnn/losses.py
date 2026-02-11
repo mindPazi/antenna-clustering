@@ -92,9 +92,31 @@ def contiguity_loss(z, positions):
     return per_cluster.mean()
 
 
+def allowed_sizes_loss(z, allowed_sizes):
+    """
+    Penalize cluster sizes not in the allowed set (e.g. {1, 2, 4}).
+
+    For each active cluster, compute squared distance to nearest allowed size.
+    """
+    cluster_sizes = z.sum(dim=0)  # (K,) soft sizes
+    active_mask = cluster_sizes > 0.5
+    active_sizes = cluster_sizes[active_mask]
+
+    if active_sizes.numel() == 0:
+        return torch.tensor(0.0, device=z.device)
+
+    allowed = torch.tensor(allowed_sizes, dtype=torch.float, device=z.device)
+    # Distance of each active cluster size to nearest allowed size
+    dists = (active_sizes.unsqueeze(1) - allowed.unsqueeze(0)) ** 2  # (n_active, n_allowed)
+    min_dists = dists.min(dim=1)[0]  # (n_active,)
+
+    return min_dists.mean()
+
+
 def total_loss(z, W, positions, target_cf=3.0,
                lambda_cf=10.0, lambda_entropy=0.5,
-               lambda_contiguity=0.5, lambda_balance=5.0):
+               lambda_contiguity=0.5, lambda_balance=5.0,
+               allowed_sizes=None, lambda_allowed=5.0):
     """
     Combined loss for physics-informed clustering with target CF.
 
@@ -104,6 +126,7 @@ def total_loss(z, W, positions, target_cf=3.0,
       - balance          : penalize imbalanced cluster sizes
       - entropy          : encourage confident hard assignments
       - contiguity       : spatial compactness
+      - allowed sizes    : penalize sizes not in allowed set (optional)
     """
     loss_cut = coupling_mincut_loss(z, W)
     loss_cf = clustering_factor_loss(z, target_cf)
@@ -117,10 +140,17 @@ def total_loss(z, W, positions, target_cf=3.0,
              + lambda_entropy * loss_ent
              + lambda_contiguity * loss_cont)
 
-    return total, {
+    loss_dict = {
         'cut': loss_cut.item(),
         'cf': loss_cf.item(),
         'balance': loss_bal.item(),
         'entropy': loss_ent.item(),
         'contiguity': loss_cont.item(),
     }
+
+    if allowed_sizes is not None:
+        loss_as = allowed_sizes_loss(z, allowed_sizes)
+        total = total + lambda_allowed * loss_as
+        loss_dict['allowed_sizes'] = loss_as.item()
+
+    return total, loss_dict

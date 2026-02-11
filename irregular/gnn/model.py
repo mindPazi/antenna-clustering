@@ -52,8 +52,8 @@ class URAClusteringGNN(nn.Module):
         self.classifier = nn.Linear(hidden_dim, num_clusters)
         self.dropout = dropout
         
-        # Initialize classifier with small weights for balanced start
-        nn.init.xavier_uniform_(self.classifier.weight, gain=0.1)
+        # Initialize classifier with moderate weights to break symmetry
+        nn.init.xavier_uniform_(self.classifier.weight, gain=0.5)
         nn.init.zeros_(self.classifier.bias)
 
     def forward(self, x, edge_index, edge_attr, temperature=1.0):
@@ -90,8 +90,11 @@ class URAClusteringGNN(nn.Module):
         h = self.conv3(h, edge_index, edge_attr)
         h = F.elu(h)
 
-        # Classifier with temperature scaling
+        # Classifier with Gumbel-Softmax (training) or Softmax (eval)
         logits = self.classifier(h)
-        z = F.softmax(logits / temperature, dim=-1)
-        
+        if self.training:
+            z = F.gumbel_softmax(logits, tau=temperature, hard=False, dim=-1)
+        else:
+            z = F.softmax(logits / temperature, dim=-1)
+
         return z
