@@ -65,8 +65,8 @@ The goal is to partition the 256 elements into clusters such that:
           physically close (not scattered across the array).
     \item \textbf{Radiation performance is preserved}: the far-field pattern should maintain
           high main-lobe gain, low side-lobe levels (SLL), and narrow beamwidths (HPBW).
-    \item \textbf{Cost function $C_m$ is minimized}: $C_m$ counts how many angular samples
-          in the far-field pattern exceed a prescribed SLL mask---ideally $C_m = 0$.
+    \item \textbf{Cost function $C_m$ is minimized}: $C_m$ measures the mean of the top-10
+          worst violations of the SLL mask in the far-field pattern---ideally $C_m = 0$.
 \end{enumerate}
 
 \subsection{How Do We Optimize?}
@@ -82,6 +82,16 @@ is an upper bound on the number of clusters.
 The GNN automatically deactivates unused clusters, discovering the optimal $K$.
 Hard assignments are obtained by $\text{cluster}(i) = \arg\max_k Z_{ik}$.
 
+During training, the model uses \textbf{Gumbel-Softmax} (instead of plain softmax) to produce
+the soft assignments $\mathbf{Z}$.
+Gumbel-Softmax adds stochastic noise to the logits, which breaks the symmetry of the initial
+uniform assignments and ensures non-zero gradients flow through the MinCut loss.
+A \textbf{temperature annealing} schedule controls the trade-off between exploration
+(high temperature, soft assignments) and exploitation (low temperature, hard assignments):
+the temperature starts at $T=5.0$ and is linearly annealed to $T=0.5$ over the first 70\%
+of training epochs.
+At inference time, standard softmax is used for deterministic assignments.
+
 \subsection{Inputs and Outputs Summary}
 
 \begin{center}
@@ -90,15 +100,18 @@ Hard assignments are obtained by $\text{cluster}(i) = \arg\max_k Z_{ik}$.
 \toprule
 \textbf{Inputs} & 256 antenna positions on a $16\times16$ grid; spacing $d_x=0.5\lambda$,
 $d_y=0.7\lambda$; frequency $29.5\;\text{GHz}$; target clustering factor $\text{CF}_{\text{target}}$;
-beam steering direction $(\theta_0, \phi_0)$; SLL mask thresholds. \\
+beam steering direction $(\theta_0, \phi_0)$; SLL mask thresholds;
+optionally, a set of allowed cluster sizes (e.g.\ $\{1, 2, 4\}$). \\
 \midrule
 \textbf{Optimization} & Physics-informed unsupervised GNN minimizing a composite loss
-(coupling MinCut + clustering factor + entropy + contiguity).
-Mutual coupling used as edge weights. No labelled data needed. \\
+(coupling MinCut + clustering factor + balance + entropy + contiguity + optional allowed-sizes).
+Mutual coupling used as edge weights. Gumbel-Softmax with temperature annealing.
+No labelled data needed. \\
 \midrule
 \textbf{Outputs} & Cluster assignment vector $\mathbf{c} \in \{0,\dots,K{-}1\}^{256}$
 where $K$ is automatically discovered;
-far-field radiation pattern; performance metrics (gain, HPBW, SLL, $C_m$). \\
+far-field radiation pattern; performance metrics (gain, HPBW, SLL, $C_m$);
+hardware reduction percentage $= (1 - K/N) \times 100\%$. \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -138,7 +151,8 @@ Imports the required libraries and sets random seeds for reproducibility.
               using a simplified analytical model: $M_{ij} = e^{-j2\pi r_{ij}} / (r_{ij} + 0.1)$
               with edge/corner corrections.
         \item \texttt{train\_ura\_clustering} --- physics-informed training loop with target
-              clustering factor. The GNN discovers the optimal number of clusters automatically.
+              clustering factor, Gumbel-Softmax, and temperature annealing.
+              The GNN discovers the optimal number of clusters automatically.
         \item \texttt{assignments\_to\_antenna\_format} --- converts a flat cluster-label vector
               into the list-of-coordinate-arrays format expected by the antenna physics engine.
     \end{itemize}
@@ -147,7 +161,29 @@ Imports the required libraries and sets random seeds for reproducibility.
 \end{itemize}
 
 \textbf{Output.}
-Prints the PyTorch version (2.9.1+cpu) and whether CUDA is available (False---training runs on CPU).
+Prints the PyTorch version and whether CUDA is available.
+
+% ------------------------------------------------------------
+\subsection{Checkpoint Utilities Cell}
+% ------------------------------------------------------------
+
+\textbf{What it does.}
+Defines helper functions for saving intermediate results to JSON files in the
+\texttt{intermediate\_steps/} directory:
+
+\begin{itemize}
+    \item \texttt{\_to\_serializable} / \texttt{\_convert} --- recursively convert numpy arrays
+          and torch tensors to JSON-serializable Python types.
+    \item \texttt{\_build\_config\_step} --- creates a config dict from a \texttt{URAConfig} object.
+    \item \texttt{\_build\_training\_step} --- creates a training step dict with cluster assignments
+          and sizes.
+    \item \texttt{\_build\_radiation\_step} --- creates a radiation step dict from
+          \texttt{evaluate\_clustering} results and lobe metrics (Cm, CF, SLL, HPBW, cuts, etc.).
+    \item \texttt{save\_checkpoint} --- saves a full checkpoint (notebook name, case name,
+          description, timestamp, steps) to a JSON file.
+\end{itemize}
+
+These checkpoints enable cross-notebook comparison (e.g.\ GNN vs MC/GA results).
 
 % ------------------------------------------------------------
 \subsection{Cell 2 --- Section Header (Markdown)}
@@ -180,7 +216,7 @@ Spacing: dx=0.5 lambda, dy=0.7 lambda
 \subsection{Cell 4 --- Section Header (Markdown)}
 % ------------------------------------------------------------
 Markdown: ``\textbf{2.\ Train GNN (Physics-Informed)} --- Uses mutual coupling and targets a
-clustering factor of $\sim$3.''
+clustering factor of $\sim$2.''
 
 % ------------------------------------------------------------
 \subsection{Cell 5 --- Train GNN (Physics-Informed)}
@@ -189,13 +225,14 @@ clustering factor of $\sim$3.''
 
 \textbf{What it does.}
 Trains the GNN to partition 256 antennas into clusters using the physics-informed pipeline
-with a target clustering factor of $\text{CF} = 3$.
+with a target clustering factor of $\text{CF} = 2$ for 2000 epochs.
 The number of clusters $K$ is \emph{not} fixed---the GNN discovers it automatically.
 
 \paragraph{Inside \texttt{train\_ura\_clustering}:}
 \begin{enumerate}
     \item \textbf{Upper bound on clusters.}
           $K_{\max} = \min\bigl(N,\; \lfloor N / \text{CF}_{\text{target}} \times 1.5 \rfloor\bigr)$.
+          For $\text{CF}=2$: $K_{\max} = \min(256, 192) = 192$.
           The GNN outputs $K_{\max}$ soft clusters and deactivates unused ones during training.
 
     \item \textbf{Graph construction} (\texttt{create\_ura\_graph} with \texttt{use\_coupling=True}).
@@ -207,8 +244,10 @@ The number of clusters $K$ is \emph{not} fixed---the GNN discovers it automatica
               $M_{ij} = \frac{e^{-j2\pi r_{ij}}}{r_{ij} + 0.1} \times f_{\text{edge}}$
               where $r_{ij}$ is the distance in wavelengths and $f_{\text{edge}}$ is a correction
               factor (0.85$\times$ for edge elements, additional 0.9$\times$ for corners).
-        \item Each edge carries a feature vector $[\Delta x, \Delta y, d, |M_{ij}|]$ (4 components).
-        \item The coupling-weighted adjacency $\mathbf{W} = |\mathbf{M}|$ is used in the MinCut loss.
+        \item Each edge carries a 4-component feature vector $[\Delta x, \Delta y, d, |M_{ij}|]$
+              (spatial offsets, distance, coupling magnitude).
+        \item The coupling-weighted adjacency $\mathbf{W} = |\mathbf{M}|$ (full $N \times N$ matrix)
+              is used in the MinCut loss.
     \end{itemize}
 
     \item \textbf{Position normalization.}
@@ -220,24 +259,48 @@ The number of clusters $K$ is \emph{not} fixed---the GNN discovers it automatica
               $\to$ \texttt{GATConv}$_1$(64$\to$256, 4 heads) $\to$ \texttt{BatchNorm} $\to$ \texttt{ELU}
               $\to$ \texttt{GATConv}$_2$(256$\to$256, 4 heads) $\to$ \texttt{BatchNorm} $\to$ \texttt{ELU}
               $\to$ \texttt{GATConv}$_3$(256$\to$64, 1 head) $\to$ \texttt{ELU}
-              $\to$ \texttt{Linear(64$\to K_{\max}$)} $\to$ \texttt{Softmax}.
+              $\to$ \texttt{Linear(64$\to K_{\max}$)} $\to$ \texttt{Gumbel-Softmax}.
         \item \texttt{GATConv} = Graph Attention Convolution. Each node aggregates features
               from its neighbors using learned attention weights.
               The attention mechanism lets the network learn which neighbors matter more.
-        \item The final softmax outputs $\mathbf{Z} \in \mathbb{R}^{256 \times K_{\max}}$:
+        \item The classifier layer is initialised with Xavier uniform (gain $= 0.5$) to
+              produce diverse initial logits and break symmetry.
+        \item During \textbf{training}: the logits are passed through
+              \texttt{F.gumbel\_softmax(logits, tau=$T$)} which adds Gumbel noise for
+              exploration and uses the temperature $T$ to control assignment sharpness.
+        \item During \textbf{evaluation}: standard \texttt{F.softmax(logits/$T$)} is used
+              for deterministic assignments.
+        \item The final output is $\mathbf{Z} \in \mathbb{R}^{256 \times K_{\max}}$:
               a soft cluster-assignment matrix where $Z_{ik}$ is the probability that
               antenna $i$ belongs to cluster $k$.
     \end{itemize}
 
-    \item \textbf{Loss function} (what we minimize). Four terms:
+    \item \textbf{Temperature annealing.}
+    The Gumbel-Softmax temperature $T$ is linearly annealed:
+    \[
+        T(\text{epoch}) = \begin{cases}
+            5.0 - \dfrac{4.5 \cdot \text{epoch}}{0.7 \cdot E} & \text{if epoch} < 0.7E \\[6pt]
+            0.5 & \text{otherwise}
+        \end{cases}
+    \]
+    where $E$ is the total number of epochs.
+    High temperature ($T=5$) at the start produces soft, exploratory assignments with
+    non-zero gradients.
+    Low temperature ($T=0.5$) at the end produces near-hard, decisive assignments.
+    This is critical because with uniform softmax ($T=1$, no noise), the MinCut loss
+    gradient is exactly zero at the uniform fixed point $Z_{ik} = 1/K$,
+    preventing any learning.
+
+    \item \textbf{Loss function} (what we minimize). Five terms (six when
+          \texttt{allowed\_sizes} is specified):
     \begin{enumerate}[label=\alph*)]
         \item \textbf{Coupling MinCut loss} (weight 1.0):
               \[
                   \mathcal{L}_{\text{cut}} = -\frac{\text{tr}(\mathbf{Z}^\top \mathbf{W}\, \mathbf{Z})}
-                  {\text{tr}(\mathbf{Z}^\top \mathbf{D}\, \mathbf{Z})}
+                  {\text{tr}(\mathbf{Z}^\top \mathbf{D}\, \mathbf{Z}) + \epsilon}
               \]
-              where $\mathbf{W} = |\mathbf{M}|$ is the coupling-weighted adjacency matrix
-              and $\mathbf{D} = \text{diag}(\mathbf{W}\,\mathbf{1})$.
+              where $\mathbf{W} = |\mathbf{M}|$ is the coupling-weighted adjacency matrix,
+              $\mathbf{D} = \text{diag}(\mathbf{W}\,\mathbf{1})$, and $\epsilon = 10^{-8}$.
               Minimizing this encourages the network to place \emph{strongly coupled} elements
               in the \emph{same} cluster.
 
@@ -252,9 +315,20 @@ The number of clusters $K$ is \emph{not} fixed---the GNN discovers it automatica
               This steers the GNN toward the desired average cluster size without
               fixing the number of clusters \emph{a priori}.
 
+        \item \textbf{Balance loss} (weight $\lambda_{\text{bal}} = 5.0$):
+              \[
+                  \mathcal{L}_{\text{bal}} = \frac{1}{|\mathcal{A}|}
+                  \sum_{k \in \mathcal{A}} \frac{(s_k - \text{CF}_{\text{target}})^2}
+                  {\text{CF}_{\text{target}}^2}
+              \]
+              where $\mathcal{A} = \{k : s_k > 0.5\}$ is the set of active clusters.
+              Penalizes imbalanced cluster sizes: each active cluster should have
+              approximately $\text{CF}_{\text{target}}$ elements.
+
         \item \textbf{Entropy loss} (weight $\lambda_{\text{ent}} = 0.5$):
               \[
-                  \mathcal{L}_{\text{ent}} = -\frac{1}{N}\sum_{i=1}^{N}\sum_{k=1}^{K} Z_{ik} \log Z_{ik}
+                  \mathcal{L}_{\text{ent}} = -\frac{1}{N}\sum_{i=1}^{N}\sum_{k=1}^{K}
+                  Z_{ik} \log(Z_{ik} + \epsilon)
               \]
               Encourages \emph{confident} assignments (low entropy $\Rightarrow$ each node is
               assigned to one cluster with high probability, not spread evenly).
@@ -267,15 +341,29 @@ The number of clusters $K$ is \emph{not} fixed---the GNN discovers it automatica
               where $\boldsymbol{\mu}_k = \sum_i Z_{ik}\,\mathbf{p}_i \,/\, s_k$ is the soft
               centroid of cluster $k$. Penalizes fragmented clusters by encouraging spatial
               compactness.
+
+        \item \textbf{Allowed-sizes loss} (weight $\lambda_{\text{as}} = 5.0$, optional):
+              \[
+                  \mathcal{L}_{\text{as}} = \frac{1}{|\mathcal{A}|}
+                  \sum_{k \in \mathcal{A}} \min_{a \in \mathcal{S}} (s_k - a)^2
+              \]
+              where $\mathcal{S}$ is the set of allowed sizes (e.g.\ $\{1, 2, 4\}$).
+              Each active cluster's soft size is penalized by its squared distance to the
+              nearest allowed size. Only active when \texttt{allowed\_sizes} is specified.
     \end{enumerate}
 
-    Total loss: $\mathcal{L} = \mathcal{L}_{\text{cut}}
-    + 10 \cdot \mathcal{L}_{\text{cf}}
-    + 0.5 \cdot \mathcal{L}_{\text{ent}}
-    + 0.5 \cdot \mathcal{L}_{\text{cont}}$.
+    Total loss:
+    \[
+        \mathcal{L} = \mathcal{L}_{\text{cut}}
+        + 10 \cdot \mathcal{L}_{\text{cf}}
+        + 5 \cdot \mathcal{L}_{\text{bal}}
+        + 0.5 \cdot \mathcal{L}_{\text{ent}}
+        + 0.5 \cdot \mathcal{L}_{\text{cont}}
+        \;[\;+ 5 \cdot \mathcal{L}_{\text{as}}\;]
+    \]
 
     \item \textbf{Optimizer:} AdamW (lr $= 0.001$, weight decay $= 10^{-4}$) with cosine
-          annealing learning rate schedule, for 500 epochs.
+          annealing learning rate schedule, for 2000 epochs.
           Gradient clipping with max norm $1.0$ for stability.
 
     \item \textbf{NaN recovery:} if NaN values are detected during training, the model is
@@ -285,6 +373,13 @@ The number of clusters $K$ is \emph{not} fixed---the GNN discovers it automatica
           seen during training is saved. If the final result is degenerate (single cluster),
           the best checkpoint is used instead.
 
+    \item \textbf{Post-processing (when \texttt{allowed\_sizes} is set):}
+          After extracting hard assignments, the function \texttt{\_snap\_to\_allowed\_sizes}
+          greedily splits any cluster whose size is not in the allowed set.
+          For example, a cluster of size 3 is split into $2+1$; size 5 into $4+1$;
+          size 6 into $4+2$; size 7 into $4+2+1$; size 8 into $4+4$.
+          The splitting uses the largest allowed size first.
+
     \item \textbf{Output:} After training, hard assignments are extracted:
           $\text{cluster}(i) = \arg\max_k Z_{ik}$.
           Cluster labels are relabelled to consecutive integers (gaps from empty clusters
@@ -292,8 +387,9 @@ The number of clusters $K$ is \emph{not} fixed---the GNN discovers it automatica
 \end{enumerate}
 
 \textbf{Output.}
-The training prints progress every 100 epochs, showing the total loss, number of active
-clusters, current clustering factor, and cluster size statistics (min, max, mean).
+The training prints progress every 100 epochs, showing the total loss, temperature $T$,
+number of active clusters, current clustering factor, cluster size statistics (min, max, mean),
+and individual loss components (cut, cf, balance).
 The final output reports the discovered number of clusters and the achieved CF.
 
 % ------------------------------------------------------------
@@ -406,38 +502,87 @@ The cell performs the following steps:
               summed per cluster, then combined as $\text{FF} = \text{KerFF} \cdot c_0^\top$.
         \item Interpolates from $(w,v)$ spectral domain to $(\theta, \phi)$ angular domain.
         \item Adds element pattern gain: $\text{FF\_I\_dB} = \text{FF\_norm\_dB} + G_{\text{el,max}} + 10\log_{10}(N_{\text{active}})$.
-        \item Computes $C_m$: counts how many angular samples exceed the SLL mask.
+        \item Computes $C_m$: the mean of the top-10 worst SLL mask violations (in dB).
+              $C_m = 0$ means no violation.
         \item Computes SLL in-FoV and out-of-FoV (excluding a $\pm10^\circ$ main-lobe exclusion zone).
     \end{enumerate}
 
     \item \textbf{Plots} the 6-panel lobe analysis figure.
 
     \item \textbf{Prints} the number of clusters, clustering factor, $C_m$,
-          SLL out-of-FoV, and SLL in-FoV.
+          SLL out-of-FoV, SLL in-FoV, and \textbf{hardware reduction}
+          $= (1 - K/N) \times 100\%$.
 \end{enumerate}
+
+% ------------------------------------------------------------
+\subsection{Initial Checkpoint Save Cell}
+% ------------------------------------------------------------
+
+Saves the initial GNN result to \texttt{gnn\_initial.json} in the
+\texttt{intermediate\_steps/} directory, including config, training, and radiation data.
 
 \newpage
 % ============================================================
-\section{Test Cases (Cells 15--25)}
+\section{Test Cases}
 % ============================================================
 
-The remaining cells implement 5 specific test cases to evaluate the GNN under different
-steering directions, target clustering factors, and SLL constraints.
+The remaining cells implement 6 test cases (Case~0 through Case~5) to evaluate the GNN
+under different steering directions, target clustering factors, and SLL constraints.
 All cases share:
 \begin{itemize}
     \item $f = 29.5\;\text{GHz}$, element pattern $\cos(\theta)\cos(\phi)$ ($P=1$).
     \item $N = 256$ ($16 \times 16$), spacing $d_y = 0.7\lambda$, $d_x = 0.5\lambda$.
-    \item Physics-informed GNN mode (500 epochs), mutual coupling edge weights.
+    \item Physics-informed GNN mode (2000 epochs), Gumbel-Softmax with temperature annealing,
+          mutual coupling edge weights.
     \item The number of clusters $K$ is auto-discovered to achieve the target CF.
+    \item \textbf{Hardware reduction} printed: $(1 - K/N) \times 100\%$.
+    \item Checkpoint saved to JSON after each case.
 \end{itemize}
 
 Each test case follows the \textbf{same pipeline}:
 \begin{enumerate}
-    \item Create \texttt{URAConfig} $\to$ train GNN with \texttt{target\_cf} $\to$ get cluster assignments.
+    \item Create \texttt{URAConfig} $\to$ train GNN with \texttt{target\_cf}
+          (and optionally \texttt{allowed\_sizes}) $\to$ get cluster assignments.
+    \item Visualize clusters (scatter + grid).
     \item Create \texttt{AntennaArray} with case-specific steering and mask.
-    \item Convert assignments $\to$ evaluate radiation $\to$ plot $\to$ print results.
+    \item Convert assignments $\to$ evaluate radiation $\to$ plot $\to$ print results
+          (including hardware reduction).
     \item Save checkpoint to JSON.
 \end{enumerate}
+
+% ------------------------------------------------------------
+\subsection{Case 0: $\theta=0^\circ$, $\phi=0^\circ$, target CF$=2$, SLL $< -20\;\text{dB}$, sizes $\{1,2,4\}$}
+% ------------------------------------------------------------
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Parameter} & \textbf{Value} \\
+\midrule
+Beam steering & boresight $\theta_0 = 0^\circ$, $\phi_0 = 0^\circ$ \\
+Target clustering factor & $\text{CF} = 2$ ($\approx 2$ elements/cluster) \\
+SLL requirement & $< -20\;\text{dB}$ (both in-FoV and out-of-FoV) \\
+Allowed cluster sizes & $\{1, 2, 4\}$ (enforced via loss + post-processing) \\
+FoV mask & elevation $\pm30^\circ$, azimuth $\pm60^\circ$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{What happens.}
+This is the baseline case: no beam steering (boresight), moderate compression ($\text{CF}=2$),
+and cluster sizes restricted to $\{1, 2, 4\}$.
+The allowed-sizes constraint is enforced in two ways:
+\begin{enumerate}
+    \item \textbf{During training}: the allowed-sizes loss $\mathcal{L}_{\text{as}}$
+          penalizes cluster sizes that are not in $\{1, 2, 4\}$ (soft constraint).
+    \item \textbf{After training}: the \texttt{\_snap\_to\_allowed\_sizes} function
+          greedily splits any remaining invalid-size clusters (hard constraint).
+\end{enumerate}
+
+After printing the GNN results, the cell loads the MC/GA Case~0 checkpoint
+(\texttt{clustering\_case\_0.json}) and prints a \textbf{comparison table} showing
+hardware reduction and performance differences (Cm, SLL\_out, SLL\_in) between
+GNN and Monte Carlo / Genetic Algorithm.
 
 % ------------------------------------------------------------
 \subsection{Case 1: $\theta=10^\circ$, $\phi=0^\circ$, target CF$=2$, SLL $< -20\;\text{dB}$}
@@ -560,28 +705,35 @@ compared to element-level control).
 \toprule
 \textbf{Input} & A $16 \times 16$ antenna array at $29.5\;\text{GHz}$ with specified
 element spacing, beam steering direction, target clustering factor $\text{CF}_{\text{target}}$,
-and SLL mask. \\
+SLL mask, and optionally a set of allowed cluster sizes. \\
 \midrule
 \textbf{What we optimize} & The assignment of 256 antenna elements into $K$ clusters
 (where $K$ is auto-discovered), such that the average cluster size matches the target
-clustering factor, clusters are spatially contiguous, and the resulting far-field radiation
-pattern meets the SLL requirements. \\
+clustering factor, clusters are spatially contiguous, cluster sizes belong to the allowed
+set (if specified), and the resulting far-field radiation pattern meets the SLL requirements. \\
 \midrule
 \textbf{How} & A 3-layer Graph Attention Network (GAT) with mutual coupling edge weights
-outputs soft cluster assignments $\mathbf{Z}$, trained unsupervised by minimizing a
-composite loss: coupling MinCut (group strongly-coupled elements),
+outputs soft cluster assignments $\mathbf{Z}$ via Gumbel-Softmax with temperature annealing
+($T: 5.0 \to 0.5$), trained unsupervised by minimizing a composite loss:
+coupling MinCut (group strongly-coupled elements),
 clustering factor (target average cluster size),
+balance (penalize imbalanced sizes),
 entropy (confident assignments),
-and contiguity (spatial compactness). \\
+contiguity (spatial compactness),
+and optionally allowed-sizes (restrict to valid sizes).
+Post-processing snaps cluster sizes to allowed values when specified. \\
 \midrule
 \textbf{Output} & A cluster assignment vector $\mathbf{c} \in \{0,\dots,K{-}1\}^{256}$
 where $K$ is automatically discovered,
-and the resulting far-field radiation pattern with metrics:
-boresight gain, HPBW, SLL (in/out of FoV), and cost function $C_m$. \\
+the resulting far-field radiation pattern with metrics:
+boresight gain, HPBW, SLL (in/out of FoV), cost function $C_m$,
+and hardware reduction $(1 - K/N) \times 100\%$.
+Checkpoints saved to JSON for cross-notebook comparison with MC/GA results. \\
 \midrule
 \textbf{Key result} & The physics-informed GNN discovers the optimal number of clusters
 to achieve the target clustering factor while respecting mutual coupling structure
-and spatial contiguity. \\
+and spatial contiguity. Case~0 includes a direct comparison with Monte Carlo and
+Genetic Algorithm baselines from \texttt{clustering\_comparison.ipynb}. \\
 \bottomrule
 \end{tabular}
 \end{center}

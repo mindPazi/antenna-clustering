@@ -34,6 +34,7 @@ class ClusterConfig:
     """
     max_cluster_size: int = 3
     min_cluster_size: int = 1
+    allowed_sizes: list = None  # Se specificato, solo queste dimensioni vengono usate
 
 
 class FreeFormSubarraySetGeneration:
@@ -46,12 +47,13 @@ class FreeFormSubarraySetGeneration:
     """
 
     def __init__(self, lattice: LatticeConfig, NN: np.ndarray, MM: np.ndarray,
-                 max_size: int = 4, min_size: int = 1):
+                 max_size: int = 4, min_size: int = 1, allowed_sizes: list = None):
         self.lattice = lattice
         self.NN = NN
         self.MM = MM
         self.max_size = max_size
         self.min_size = min_size
+        self.allowed_sizes = allowed_sizes
 
         # Get array bounds
         self.min_N = int(np.min(NN))
@@ -121,13 +123,14 @@ class FreeFormSubarraySetGeneration:
             cluster_array = np.array(cluster_list)
             S.append(cluster_array)
 
+        # Filter by allowed sizes if specified
+        if self.allowed_sizes is not None:
+            S = [c for c in S if c.shape[0] in self.allowed_sizes]
+
         # Sort clusters by size then by first element for reproducibility
         S.sort(key=lambda x: (x.shape[0], tuple(x[0])))
 
         return S, len(S)
-
-
-print("FreeFormSubarraySetGeneration class defined!")
 
 
 class IrregularClusteringMonteCarlo:
@@ -151,7 +154,8 @@ class IrregularClusteringMonteCarlo:
         gen = FreeFormSubarraySetGeneration(
             array.lattice, array.NN, array.MM,
             max_size=cluster_config.max_cluster_size,
-            min_size=cluster_config.min_cluster_size
+            min_size=cluster_config.min_cluster_size,
+            allowed_sizes=cluster_config.allowed_sizes
         )
         self.S_all = [gen.S]
         self.N_all = [gen.Nsub]
@@ -423,9 +427,9 @@ class IrregularClusteringMonteCarlo:
 
 def main():
     """Execute Monte Carlo optimization"""
-    lattice = LatticeConfig(Nz=16, Ny=16, dist_z=0.6, dist_y=0.53, lattice_type=1)
-    system = SystemConfig(freq=29.5e9, azi0=0, ele0=0, dele=0.5, dazi=0.5)
-    mask = MaskConfig(elem=30, azim=60, SLL_level=20, SLLin=15)
+    lattice = LatticeConfig(Nz=16, Ny=16, dist_z=0.7, dist_y=0.5, lattice_type=1)
+    system = SystemConfig(freq=29.5e9, azi0=0, ele0=10, dele=0.5, dazi=0.5)
+    mask = MaskConfig(elem=30, azim=60, SLL_level=20, SLLin=20)
     eef = ElementPatternConfig(P=1, Gel=5, load_file=0)
     cluster_config = ClusterConfig(max_cluster_size=3, min_cluster_size=1)
     sim_config = SimulationConfig(Niter=500, Cost_thr=1000)

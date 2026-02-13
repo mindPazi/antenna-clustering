@@ -1,0 +1,814 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb}
+\usepackage{geometry}
+\geometry{margin=2.5cm}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{caption}
+
+\lstset{
+  language=Python,
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{blue},
+  commentstyle=\color{gray},
+  breaklines=true,
+  frame=single,
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+}
+
+\title{Monte Carlo vs Genetic Algorithm\\Antenna Array Clustering\\[6pt]
+\large Cell-by-Cell Explanation of \texttt{clustering\_comparison.ipynb}}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\newpage
+
+% ============================================================
+\section{Problem Statement}
+% ============================================================
+
+\subsection{What Is the Physical Setup?}
+
+We have a \textbf{Uniform Rectangular Array (URA)} of $16 \times 16 = 256$ antenna elements
+operating at $29.5\;\text{GHz}$ (millimeter-wave, 5G NR band).
+The elements are spaced $0.5\lambda$ apart horizontally and $0.7\lambda$ apart vertically,
+where $\lambda = c / f \approx 1.017\;\text{cm}$.
+
+\textbf{Clustering} (sub-arraying) groups nearby elements so that all elements
+in the same cluster share a single phase-shifter.
+This reduces hardware cost: instead of 256 independent RF chains, we only need
+$K$ clusters.
+
+\subsection{What Do We Want to Optimize?}
+
+The goal is to partition the 256 elements into clusters such that:
+\begin{enumerate}[label=(\roman*)]
+    \item \textbf{Clusters are spatially contiguous}: elements in the same cluster
+          are physically adjacent (4-connected).
+    \item \textbf{Radiation performance is preserved}: the far-field pattern should maintain
+          high main-lobe gain, low side-lobe levels (SLL), and narrow beamwidths (HPBW).
+    \item \textbf{Cost function $C_m$ is minimized}: $C_m$ measures the mean of the top-10
+          worst violations of the SLL mask in the far-field pattern---ideally $C_m = 0$.
+    \item \textbf{Cluster sizes are constrained}: optionally, only certain cluster sizes
+          are allowed (e.g.\ $\{1, 2, 4\}$).
+\end{enumerate}
+
+\subsection{How Do We Optimize?}
+
+This notebook compares two metaheuristic optimization approaches:
+\begin{enumerate}
+    \item \textbf{Monte Carlo (MC)} with 3-phase strategy:
+    \begin{itemize}
+        \item Phase~1 (iter 1--10): Greedy initialization.
+        \item Phase~2 (iter 11--50): Random sampling.
+        \item Phase~3 (iter 51+): Adaptive sampling with learned cluster probabilities.
+        \item Local search refinement every 25 iterations.
+    \end{itemize}
+    \item \textbf{Genetic Algorithm (GA)} with:
+    \begin{itemize}
+        \item Tournament selection, uniform crossover, bit-flip mutation.
+        \item Elitism (top individuals preserved).
+        \item Overlap removal after each genetic operation.
+        \item Clustering factor penalty in fitness function.
+    \end{itemize}
+\end{enumerate}
+
+Both algorithms use the \emph{same evaluation budget} (500 clustering evaluations)
+to ensure a fair comparison.
+
+\subsection{Inputs and Outputs Summary}
+
+\begin{center}
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{p{3cm} p{10cm}}
+\toprule
+\textbf{Inputs} & 256 antenna positions on a $16\times16$ grid; spacing $d_x=0.5\lambda$,
+$d_y=0.7\lambda$; frequency $29.5\;\text{GHz}$; beam steering direction $(\theta_0, \phi_0)$;
+SLL mask thresholds; max/min cluster sizes; optionally a set of allowed sizes. \\
+\midrule
+\textbf{Optimization} & Monte Carlo 3-phase search and Genetic Algorithm, both operating on
+a binary selection vector over all possible free-form connected clusters.
+Both use the same physics engine for evaluation.
+Overlap removal ensures valid, non-overlapping partitions.
+Uncovered elements are filled with singleton clusters. \\
+\midrule
+\textbf{Outputs} & Best cluster partition; far-field radiation pattern;
+performance metrics (gain, HPBW, SLL, $C_m$, clustering factor);
+convergence curves; cluster layout visualization. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\newpage
+% ============================================================
+\section{Cell-by-Cell Explanation}
+% ============================================================
+
+% ------------------------------------------------------------
+\subsection{Cell 0 --- Title (Markdown)}
+% ------------------------------------------------------------
+A markdown header declaring the notebook title:
+\emph{``Antenna Clustering Optimization -- Comparison.
+This notebook compares the original Monte Carlo algorithm with the optimized
+Genetic Algorithm approach.''}
+
+% ------------------------------------------------------------
+\subsection{Cell 1 --- Section Header (Markdown)}
+% ------------------------------------------------------------
+Markdown: ``\textbf{1.\ Setup and Import}''.
+
+% ------------------------------------------------------------
+\subsection{Cell 2 --- Colab Setup}
+% ------------------------------------------------------------
+
+\textbf{What it does.}
+Checks if the notebook is running on Google Colab and installs dependencies
+(\texttt{numpy}, \texttt{scipy}, \texttt{matplotlib}, \texttt{cupy-cuda12x}).
+
+% ------------------------------------------------------------
+\subsection{Cell 3 --- Imports}
+% ------------------------------------------------------------
+
+\textbf{What it does.}
+Imports the required libraries:
+\begin{itemize}
+    \item \texttt{numpy} --- numerical arrays and linear algebra.
+    \item \texttt{scipy.interpolate} --- \texttt{LinearNDInterpolator} and \texttt{Delaunay}
+          for spectral-to-angular domain interpolation.
+    \item \texttt{scipy.signal.find\_peaks} --- lobe analysis.
+    \item \texttt{matplotlib} --- all plots.
+    \item \texttt{cupy} (optional) --- GPU acceleration for kernel computations.
+\end{itemize}
+
+Attempts to import CuPy for GPU acceleration; falls back to NumPy if unavailable.
+
+% ------------------------------------------------------------
+\subsection{Cell 4 --- Checkpoint Utilities}
+% ------------------------------------------------------------
+
+\textbf{What it does.}
+Defines helper functions for saving intermediate results to JSON:
+\begin{itemize}
+    \item \texttt{\_to\_serializable} / \texttt{\_convert} --- recursively convert numpy arrays
+          to JSON-serializable Python types.
+    \item \texttt{save\_checkpoint} --- saves a full checkpoint (notebook name, case name,
+          description, timestamp, steps) to a JSON file in \texttt{intermediate\_steps/}.
+\end{itemize}
+
+% ------------------------------------------------------------
+\subsection{Cell 5 --- Section Header (Markdown)}
+% ------------------------------------------------------------
+Markdown: ``\textbf{2.\ Configuration Classes Definition}''.
+
+% ------------------------------------------------------------
+\subsection{Cell 6 --- Configuration Dataclasses}
+\label{sec:cell6}
+% ------------------------------------------------------------
+
+\textbf{What it does.}
+Defines six \texttt{@dataclass} configuration objects:
+
+\begin{enumerate}
+    \item \textbf{\texttt{LatticeConfig}}: array geometry ($N_z$, $N_y$, element spacing
+          $d_z$, $d_y$ in wavelengths, lattice type).
+    \item \textbf{\texttt{SystemConfig}}: frequency $f$ (Hz), auto-computed $\lambda$ and
+          $\beta = 2\pi/\lambda$, beam steering angles $(\text{azi}_0, \text{ele}_0)$,
+          angular resolution $(\Delta\text{ele}, \Delta\text{azi})$.
+    \item \textbf{\texttt{MaskConfig}}: SLL mask---field-of-view extent
+          (\texttt{elem}, \texttt{azim}), out-of-FoV threshold (\texttt{SLL\_level}),
+          in-FoV threshold (\texttt{SLLin}).
+    \item \textbf{\texttt{ElementPatternConfig}}: element pattern exponent $P$
+          (cosine pattern), element gain $G_{\text{el}}$~(dBi).
+    \item \textbf{\texttt{SimulationConfig}}: number of MC iterations (\texttt{Niter}),
+          cost threshold (\texttt{Cost\_thr}) for valid solutions.
+    \item \textbf{\texttt{ClusterConfig}}: max/min cluster sizes;
+          optional \texttt{allowed\_sizes} list to restrict cluster sizes
+          (e.g.\ $\{1, 2, 4\}$).
+\end{enumerate}
+
+% ------------------------------------------------------------
+\subsection{Cell 7 --- Section Header (Markdown)}
+% ------------------------------------------------------------
+Markdown: ``\textbf{3.\ AntennaArray Class (with kernel optimizations)}''.
+
+% ------------------------------------------------------------
+\subsection{Cell 8 --- AntennaArray Class}
+\label{sec:cell8}
+% ------------------------------------------------------------
+
+\textbf{What it does.}
+Defines the core physics engine class \texttt{AntennaArray}. This is the largest
+and most important class in the notebook.
+
+\subsubsection{Constructor}
+Takes \texttt{LatticeConfig}, \texttt{SystemConfig}, \texttt{MaskConfig}, and
+optionally \texttt{ElementPatternConfig}. Calls five initialization methods:
+
+\begin{enumerate}
+    \item \textbf{\texttt{\_compute\_lattice\_vectors}}: converts spacing from wavelengths
+          to meters, producing lattice vectors $\mathbf{x}_1 = (d_y, 0)$ and
+          $\mathbf{x}_2 = (0, d_z)$.
+
+    \item \textbf{\texttt{\_generate\_lattice}}: creates the $N_z \times N_y$ grid of
+          element positions $(Y, Z)$ in meters, with staggered rows
+          ($Y[\text{odd rows}] += \Delta$).
+          Computes array aperture dimensions $D_y$, $D_z$.
+
+    \item \textbf{\texttt{\_generate\_polar\_coordinates}}: generates angular grids
+          $(\text{ele}, \text{azi})$ and spectral grids $(w, v)$.
+          The spectral grid has $N_w = \lfloor 2 \cdot 4 D_z / \lambda \rfloor$ and
+          $N_v = \lfloor 2 \cdot 4 D_y / \lambda \rfloor$ points.
+          Computes the inverse mapping from spectral to angular domain:
+          $\text{ELE}_i = 90 - \arccos(W/\beta)$, $\text{AZI}_i = \arcsin(V / (\beta \sin(90 - \text{ELE}_i)))$.
+
+    \item \textbf{\texttt{\_generate\_element\_pattern}}: computes the element radiation
+          pattern $F_{\text{el}} = (\cos(0.9\theta) \cos(0.9\phi))^P$ in both angular
+          and spectral domains. Computes $G_{\text{boresight}} = \text{RPE}_{\max} + G_{\text{el}} + 10\log_{10}(N)$.
+
+    \item \textbf{\texttt{\_generate\_mask}}: creates the SLL mask array.
+          Inside the FoV ($|\text{ele} - \text{ele}_0| \le \text{elem}$ and
+          $|\text{azi} - \text{azi}_0| \le \text{azim}$): threshold $= G_{\text{boresight}} - \text{SLLin}$.
+          Outside the FoV: threshold $= G_{\text{boresight}} - \text{SLL\_level}$.
+\end{enumerate}
+
+\subsubsection{\texttt{index\_to\_position\_cluster}}
+Converts cluster indices (lattice coordinates $[\text{NN}, \text{MM}]$) to physical
+positions $(Y_c, Z_c)$ in meters, and extracts element excitation weights $A_c$.
+
+\subsubsection{\texttt{coefficient\_evaluation}}
+Computes excitation coefficients for each cluster:
+\[
+    c_0^{(k)} = \frac{1}{L_k} \exp\!\bigl(-j(w_0 Z_{c,m}^{(k)} + v_0 Y_{c,m}^{(k)})\bigr)
+\]
+where $w_0, v_0$ encode the beam steering direction and $L_k$ is the cluster size.
+
+\subsubsection{\texttt{kernel1\_rpe} --- Far-Field Kernel}
+
+The most computationally intensive method. Computes the array far-field pattern:
+
+\begin{enumerate}
+    \item Flattens all element positions and groups them by cluster index.
+    \item Computes phase matrix: $\text{phases}_{p,e} = F_{\text{el}}(p) \cdot A_c(e) \cdot
+          e^{j(v_p Y_e + w_p Z_e)}$ for each spectral point $p$ and element $e$.
+          Uses GPU (CuPy) if available.
+    \item Sums per-cluster contributions via \texttt{np.add.at} to build the kernel matrix
+          $\text{KerFF}_{\text{sub}} \in \mathbb{C}^{N_{\text{points}} \times N_{\text{trans}}}$.
+    \item Computes far-field: $\text{FF} = \text{KerFF}_{\text{sub}} \cdot c_0^\top$.
+    \item Normalizes and converts to dB.
+    \item Interpolates from spectral $(w, v)$ to angular $(\theta, \phi)$ domain
+          using a cached Delaunay triangulation + \texttt{LinearNDInterpolator}.
+    \item Adds element pattern gain:
+          $\text{FF\_I\_dB} = \text{FF\_norm\_dB} + G_{\text{el,max}} + 10\log_{10}(N_{\text{active}})$.
+\end{enumerate}
+
+\subsubsection{\texttt{compute\_cost\_function}}
+\[
+    C_m = \text{mean}(\text{top-}k\text{ violations of } \text{FF\_I\_dB} - \text{Mask\_EA})
+\]
+where $k = \min(10, |\text{violations}|)$. Returns $0$ if no mask violations.
+
+\subsubsection{\texttt{compute\_sll}}
+Computes SLL in two regions:
+\begin{itemize}
+    \item \textbf{Out-of-FoV}: $\text{SLL}_{\text{out}} = \max(\text{FF}_{\text{out}}) - G_{\text{boresight}}$.
+    \item \textbf{In-FoV}: excludes a $\pm 10^\circ$ region around the main lobe peak,
+          then $\text{SLL}_{\text{in}} = \max(\text{FF}_{\text{sidelobe}}) - G_{\text{boresight}}$.
+\end{itemize}
+
+\subsubsection{\texttt{evaluate\_clustering}}
+Full evaluation pipeline: positions $\to$ centroids $\to$ coefficients $\to$
+kernel $\to$ cost function $\to$ SLL $\to$ returns a dictionary with all metrics
+(Cm, SLL, clustering factor, far-field pattern, etc.).
+
+% ------------------------------------------------------------
+\subsection{Cell 9 --- Section Header (Markdown)}
+% ------------------------------------------------------------
+Markdown: ``\textbf{4.\ Subarray Generation Class}''.
+
+% ------------------------------------------------------------
+\subsection{Cell 10 --- FreeFormSubarraySetGeneration}
+\label{sec:cell10}
+% ------------------------------------------------------------
+
+\textbf{What it does.}
+Generates \emph{all} possible connected clusters (free-form shapes) from size
+\texttt{min\_size} to \texttt{max\_size} using 4-connectivity (up/down/left/right).
+
+\textbf{Algorithm:}
+\begin{enumerate}
+    \item Start with all single-element clusters (one per grid position).
+    \item Iteratively expand: for each cluster of size $s$, try adding each
+          4-connected neighbor to form a cluster of size $s+1$.
+    \item Use \texttt{frozenset} for deduplication (same elements in different order
+          are the same cluster).
+    \item If \texttt{allowed\_sizes} is specified, filter to keep only clusters whose
+          size is in the allowed set.
+    \item Sort by size then by first element for reproducibility.
+\end{enumerate}
+
+For a $16 \times 16$ array with \texttt{max\_size=4}, this generates $\sim$6000 clusters.
+
+% ------------------------------------------------------------
+\subsection{Cell 11 --- Section Header (Markdown)}
+% ------------------------------------------------------------
+Markdown: ``\textbf{5.\ Optimizer Class (with all optimizations)}''.
+
+% ------------------------------------------------------------
+\subsection{Cell 12 --- IrregularClusteringMonteCarlo}
+\label{sec:cell12}
+% ------------------------------------------------------------
+
+\textbf{What it does.}
+Implements the Monte Carlo 3-phase optimization strategy.
+
+\subsubsection{Constructor}
+\begin{itemize}
+    \item Generates all free-form clusters via \texttt{FreeFormSubarraySetGeneration}.
+    \item Pre-computes cluster elements as sets for fast overlap detection.
+    \item Initializes adaptive probability tracking (scores and selection counts).
+\end{itemize}
+
+\subsubsection{Overlap Handling}
+\texttt{\_remove\_overlaps}: given a binary selection vector, shuffles selected indices
+and greedily keeps non-overlapping clusters. Then calls \texttt{\_fill\_uncovered}
+to add singleton clusters for any uncovered elements.
+
+\subsubsection{3-Phase Selection Strategy}
+\begin{enumerate}
+    \item \textbf{Phase 1 (iter 1--10): Greedy initialization.}
+          Shuffles all cluster indices, greedily selects non-overlapping clusters.
+    \item \textbf{Phase 2 (iter 11--50): Random sampling.}
+          Each cluster is independently selected with 50\% probability, then overlaps
+          are removed.
+    \item \textbf{Phase 3 (iter 51+): Adaptive sampling.}
+          Selection probability $\propto$ accumulated score / selection count.
+          Scores are updated after each evaluation: $\text{reward} = e^{-C_m / \text{Cost\_thr}}$.
+\end{enumerate}
+
+\subsubsection{Local Search}
+Every 25 iterations, if the current solution is promising ($C_m < 0.8 \times \text{best}$),
+a local search flips single bits (add/remove clusters) and keeps improvements.
+Tries up to 20 random cluster indices per iteration, up to 10 iterations.
+
+\subsubsection{Output}
+Returns all $C_m$ values, number of transceivers per iteration,
+valid solutions (those with $C_m < \text{Cost\_thr}$), and elapsed time.
+
+% ------------------------------------------------------------
+\subsection{Cell 13 --- Section Header (Markdown)}
+% ------------------------------------------------------------
+Markdown: ``\textbf{6.\ Configuration}''.
+
+% ------------------------------------------------------------
+\subsection{Cell 14 --- Shared Configuration}
+\label{sec:cell14}
+% ------------------------------------------------------------
+
+\textbf{What it does.}
+Defines the shared configuration for MC vs GA comparison:
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Parameter} & \textbf{Value} \\
+\midrule
+Evaluation budget & 500 \\
+Random seed & 42 \\
+Array & $16 \times 16$, $d_z = 0.7\lambda$, $d_y = 0.5\lambda$ \\
+Frequency & $29.5\;\text{GHz}$ \\
+Beam steering & $\theta_0 = 10^\circ$, $\phi_0 = 0^\circ$ \\
+SLL mask & $-20\;\text{dB}$ (both in/out FoV) \\
+Cluster sizes & 1--3 (free-form) \\
+\midrule
+MC & 500 iterations \\
+GA & 25 pop $\times$ 21 gen $\approx$ 487 evals \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The GA budget is computed as:
+$\text{generations} = \lfloor(\text{budget} - \text{pop\_size}) / (\text{pop\_size} - \text{elite\_size})\rfloor$.
+
+% ------------------------------------------------------------
+\subsection{Cells 15--16 --- Array Initialization}
+% ------------------------------------------------------------
+
+Creates the \texttt{AntennaArray} object with the shared configuration.
+
+% ------------------------------------------------------------
+\subsection{Cells 17--18 --- Monte Carlo Execution}
+% ------------------------------------------------------------
+
+Runs the MC optimizer with \texttt{np.random.seed(42)} for reproducibility.
+Prints progress every 50 iterations and the final best solution.
+
+% ------------------------------------------------------------
+\subsection{Cells 19--20 --- Results Summary}
+% ------------------------------------------------------------
+
+Extracts the best solution (minimum $C_m$) and prints:
+cost function, number of clusters, SLL (in/out FoV), iteration found,
+hardware reduction $= (1 - K/N) \times 100\%$, total valid solutions, execution time.
+
+% ------------------------------------------------------------
+\subsection{Cells 21--22 --- Save Results to JSON}
+% ------------------------------------------------------------
+
+Serializes MC results to \texttt{../results/mc\_results.json}, converting numpy
+types to Python native types.
+
+% ------------------------------------------------------------
+\subsection{Cell 23 --- Section Header (Markdown)}
+% ------------------------------------------------------------
+Markdown: ``\textbf{11.\ Visualization}''.
+
+% ------------------------------------------------------------
+\subsection{Cell 24 --- MC Visualization}
+% ------------------------------------------------------------
+
+Three-panel figure:
+\begin{enumerate}
+    \item Cost function $C_m$ evolution over iterations.
+    \item Number of transceivers (clusters) per iteration.
+    \item Histogram of valid solution $C_m$ values.
+\end{enumerate}
+
+% ------------------------------------------------------------
+\subsection{Cell 25 --- Section Header (Markdown)}
+% ------------------------------------------------------------
+Markdown: ``\textbf{12.\ Genetic Algorithm with Real Physics}''.
+
+% ------------------------------------------------------------
+\subsection{Cell 26 --- GA Classes Definition}
+\label{sec:cell26}
+% ------------------------------------------------------------
+
+\textbf{What it does.}
+Defines \texttt{GAParams} dataclass and \texttt{GeneticAlgorithmOptimizer} class.
+
+\subsubsection{GAParams}
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Parameter} & \textbf{Default} \\
+\midrule
+Population size & 50 \\
+Max generations & 100 \\
+Mutation rate & 0.15 \\
+Crossover rate & 0.8 \\
+Elite size & 5 \\
+Target clustering factor & 2.0 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsubsection{GeneticAlgorithmOptimizer}
+
+\textbf{Chromosome representation:} a binary vector of length
+$|\mathcal{S}|$ (total number of possible clusters), where gene $i = 1$ means
+cluster $i$ is selected.
+
+\textbf{Genetic operators:}
+\begin{itemize}
+    \item \textbf{Initialization}: random binary vectors with overlap removal.
+    \item \textbf{Selection}: tournament selection (size 3).
+    \item \textbf{Crossover}: uniform crossover (each gene independently from parent 1 or 2).
+    \item \textbf{Mutation}: bit-flip with probability $p_m = 0.15$.
+    \item \textbf{Overlap removal}: applied after mutation, before evaluation.
+    \item \textbf{Fill uncovered}: singleton clusters added for uncovered elements.
+\end{itemize}
+
+\textbf{Fitness function:}
+\[
+    f = -C_m - |\text{CF} - \text{CF}_{\text{target}}| \times 50
+\]
+where $\text{CF} = N / K$ is the achieved clustering factor.
+The clustering factor penalty steers the GA toward the desired compression ratio.
+
+\textbf{Convergence criterion:}
+Early stop if the best $C_m$ changes by $< 5$ over 5 consecutive generations.
+
+\textbf{Diversity tracking:}
+Mean standard deviation of gene values across the population.
+
+% ------------------------------------------------------------
+\subsection{Cell 27 --- GA Execution}
+% ------------------------------------------------------------
+
+Creates \texttt{GAParams} with budget-matched configuration
+(pop=25, gen=21, elite=3) and runs the GA.
+
+% ------------------------------------------------------------
+\subsection{Cells 28--29 --- MC vs GA Comparison Plot}
+% ------------------------------------------------------------
+
+Three-panel figure comparing MC and GA:
+\begin{enumerate}
+    \item Cost function $C_m$ evolution (MC iterations vs GA generations).
+    \item Number of clusters over optimization.
+    \item Histogram of valid MC solutions vs GA best $C_m$ (vertical line).
+\end{enumerate}
+
+% ------------------------------------------------------------
+\subsection{Cells 30--32 --- Lobe Analysis Functions}
+\label{sec:lobe}
+% ------------------------------------------------------------
+
+\subsubsection{\texttt{extract\_lobe\_metrics}}
+Extracts from the 2D far-field pattern:
+\begin{itemize}
+    \item Elevation and azimuth cuts at the steering direction.
+    \item \textbf{HPBW}: $-3\;\text{dB}$ beamwidth in both planes.
+    \item \textbf{SLL}: highest side-lobe peak (excluding main lobe).
+    \item Number of lobes above $-30\;\text{dB}$.
+\end{itemize}
+
+\subsubsection{\texttt{plot\_lobe\_analysis}}
+Six-panel figure:
+\begin{enumerate}
+    \item Elevation cut (Cartesian) with $-3\;\text{dB}$ line and SLL marker.
+    \item Azimuth cut (Cartesian) with $-3\;\text{dB}$ line and SLL marker.
+    \item 2D contour map of the full far-field pattern.
+    \item Summary metrics table.
+    \item Elevation pattern (polar).
+    \item Azimuth pattern (polar).
+\end{enumerate}
+
+\subsubsection{Helper Functions}
+\begin{itemize}
+    \item \texttt{rows\_to\_clusters}: converts MC \texttt{selected\_rows} binary vector
+          to cluster list, filling uncovered elements with singletons.
+    \item \texttt{genes\_to\_clusters}: converts GA genes to cluster list, filling uncovered.
+    \item \texttt{get\_ff\_from\_mc} / \texttt{get\_ff\_from\_ga}: extract \texttt{FF\_I\_dB}
+          from a solution by reconstructing clusters and calling \texttt{evaluate\_clustering}.
+\end{itemize}
+
+% ------------------------------------------------------------
+\subsection{Cells 33--36 --- Lobe Analysis (MC and GA Best Solutions)}
+% ------------------------------------------------------------
+
+Extracts the best MC and GA solutions, computes their far-field patterns,
+and plots the full 6-panel lobe analysis for each.
+
+% ------------------------------------------------------------
+\subsection{Cells 37--38 --- Final Comparison Table}
+% ------------------------------------------------------------
+
+Prints a side-by-side comparison table:
+
+\begin{center}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Metric} & \textbf{Monte Carlo} & \textbf{Genetic Algorithm} \\
+\midrule
+$C_m$ & \multicolumn{2}{c}{(from results)} \\
+Clusters ($K$) & \multicolumn{2}{c}{(from results)} \\
+SLL out [dB] & \multicolumn{2}{c}{(from results)} \\
+SLL in [dB] & \multicolumn{2}{c}{(from results)} \\
+HPBW Ele [$^\circ$] & \multicolumn{2}{c}{(from results)} \\
+HPBW Azi [$^\circ$] & \multicolumn{2}{c}{(from results)} \\
+Time [s] & \multicolumn{2}{c}{(from results)} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+% ------------------------------------------------------------
+\subsection{Cells 39--41 --- Visual Comparison and Convergence}
+% ------------------------------------------------------------
+
+Side-by-side polar radiation patterns for MC and GA, plus a convergence comparison
+plot showing running minimum $C_m$ vs evaluation count for both algorithms.
+
+% ------------------------------------------------------------
+\subsection{Cells 42--44 --- Cluster Layout Visualization}
+% ------------------------------------------------------------
+
+Side-by-side cluster layout plots showing the physical antenna positions colored
+by cluster assignment, for both MC and GA best solutions.
+Individual enlarged plots are also generated for each algorithm.
+
+% ------------------------------------------------------------
+\subsection{Cell 45 --- Initial Checkpoint}
+% ------------------------------------------------------------
+
+Saves the initial run results to \texttt{clustering\_initial.json} in the
+\texttt{intermediate\_steps/} directory.
+
+\newpage
+% ============================================================
+\section{Test Cases}
+% ============================================================
+
+The remaining cells implement 6 test cases (Case~0 through Case~5) to evaluate
+MC vs GA under different steering directions, cluster constraints, and SLL requirements.
+All cases share:
+\begin{itemize}
+    \item $f = 29.5\;\text{GHz}$, element pattern $\cos(\theta)\cos(\phi)$ ($P=1$),
+          $G_{\text{el}} = 5\;\text{dBi}$.
+    \item $N = 256$ ($16 \times 16$), spacing $d_y = 0.5\lambda$, $d_z = 0.7\lambda$.
+    \item Evaluation budget: 500 per algorithm.
+    \item Random seed: 42.
+    \item GA config: pop=25, elite=3, gen=21.
+\end{itemize}
+
+Each test case follows the \textbf{same pipeline}:
+\begin{enumerate}
+    \item Configure array, system, mask, and cluster parameters.
+    \item Run MC optimization.
+    \item Run GA optimization.
+    \item Print results summary (Cm, SLL, hardware reduction).
+    \item Plot comparison (convergence, polar patterns, cluster layouts).
+    \item Save checkpoint to JSON.
+\end{enumerate}
+
+% ------------------------------------------------------------
+\subsection{Case 0: $\theta=0^\circ$, $\phi=0^\circ$, CF$=2$, sizes $\{1,2,4\}$, SLL $< -20\;\text{dB}$}
+% ------------------------------------------------------------
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Parameter} & \textbf{Value} \\
+\midrule
+Beam steering & boresight $\theta_0 = 0^\circ$, $\phi_0 = 0^\circ$ \\
+Cluster sizes & $\{1, 2, 4\}$ (max=4, allowed\_sizes=[1,2,4]) \\
+SLL requirement & $< -20\;\text{dB}$ (SLL\_level=20, SLLin=20) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{What happens.}
+Baseline case: boresight steering, moderate compression, restricted cluster sizes.
+Both MC and GA generate only clusters of size 1, 2, or 4 (filtered by
+\texttt{allowed\_sizes}).
+
+% ------------------------------------------------------------
+\subsection{Case 1: $\theta=10^\circ$, $\phi=0^\circ$, CF$=2$, sizes $\{1,2,4\}$, SLL $< -20\;\text{dB}$}
+% ------------------------------------------------------------
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Parameter} & \textbf{Value} \\
+\midrule
+Beam steering & $\theta_0 = 10^\circ$, $\phi_0 = 0^\circ$ \\
+Cluster sizes & $\{1, 2, 4\}$ \\
+SLL requirement & $< -20\;\text{dB}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{What happens.}
+Beam steered $10^\circ$ off boresight in elevation.
+Same cluster constraints as Case~0.
+
+% ------------------------------------------------------------
+\subsection{Case 2: $\theta=0^\circ$, $\phi=60^\circ$, CF$=2$, sizes $\{1,2,4\}$, SLL $< -20\;\text{dB}$}
+% ------------------------------------------------------------
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Parameter} & \textbf{Value} \\
+\midrule
+Beam steering & $\theta_0 = 0^\circ$, $\phi_0 = 60^\circ$ \\
+Cluster sizes & $\{1, 2, 4\}$ \\
+SLL requirement & $< -20\;\text{dB}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{What happens.}
+Extreme azimuth steering ($60^\circ$)---near the edge of the field of view.
+Hardest steering case due to grating lobe risk with $d_x = 0.5\lambda$.
+
+% ------------------------------------------------------------
+\subsection{Case 3: $\theta=10^\circ$, $\phi=45^\circ$, CF$=4$, sizes $\{1,2,4\}$, SLL $< -20\;\text{dB}$}
+% ------------------------------------------------------------
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Parameter} & \textbf{Value} \\
+\midrule
+Beam steering & $\theta_0 = 10^\circ$, $\phi_0 = 45^\circ$ \\
+Cluster sizes & $\{1, 2, 4\}$ \\
+SLL requirement & $< -20\;\text{dB}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{What happens.}
+Diagonal steering with higher compression (CF$=4$, targeting $\sim$64 clusters).
+Combines the challenges of Cases~1 and~2.
+
+% ------------------------------------------------------------
+\subsection{Case 4: $\theta=10^\circ$, $\phi=45^\circ$, sizes $\{1,2,4,6\}$, SLL $< -15\;\text{dB}$}
+% ------------------------------------------------------------
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Parameter} & \textbf{Value} \\
+\midrule
+Beam steering & $\theta_0 = 10^\circ$, $\phi_0 = 45^\circ$ \\
+Cluster sizes & $\{1, 2, 4, 6\}$ (max=6) \\
+SLL requirement & $< -15\;\text{dB}$ (relaxed) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{What happens.}
+Same steering as Case~3, but with larger allowed clusters (up to 6 elements)
+and relaxed SLL constraint ($-15\;\text{dB}$).
+Tests whether larger clusters with relaxed constraints improve optimization.
+
+% ------------------------------------------------------------
+\subsection{Case 5: $\theta=0^\circ$, $\phi=0^\circ$, max size $\le 6$, free sizes}
+% ------------------------------------------------------------
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Parameter} & \textbf{Value} \\
+\midrule
+Beam steering & boresight $\theta_0 = 0^\circ$, $\phi_0 = 0^\circ$ \\
+Cluster sizes & 1--6 (no \texttt{allowed\_sizes} restriction) \\
+SLL requirement & $-20\;\text{dB}$ out-of-FoV, $-15\;\text{dB}$ in-FoV \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{What happens.}
+Boresight steering (easiest), free cluster sizes up to 6.
+No \texttt{allowed\_sizes} constraint---any size from 1 to 6 is valid.
+Tests unconstrained clustering flexibility.
+
+\newpage
+% ============================================================
+\section{Algorithm Comparison Summary}
+% ============================================================
+
+\begin{center}
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{p{3.5cm} p{5.5cm} p{5.5cm}}
+\toprule
+& \textbf{Monte Carlo (3-Phase)} & \textbf{Genetic Algorithm} \\
+\midrule
+\textbf{Representation} & Binary selection vector over all clusters
+    & Binary chromosome (same encoding) \\
+\textbf{Search strategy} & Greedy $\to$ Random $\to$ Adaptive
+    & Population-based evolutionary search \\
+\textbf{Overlap handling} & Greedy removal + fill uncovered
+    & Same (after mutation) \\
+\textbf{Local search} & Bit-flip refinement every 25 iter
+    & None (relies on crossover/mutation) \\
+\textbf{Adaptivity} & Score-based probability update
+    & Tournament selection pressure \\
+\textbf{CF control} & None (emergent)
+    & Explicit penalty in fitness \\
+\textbf{Convergence} & No early stopping
+    & Early stop if $\Delta C_m < 5$ over 5 gen \\
+\textbf{Budget} & $N_{\text{iter}}$ evaluations
+    & $\text{pop} + \text{gen} \times (\text{pop} - \text{elite})$ evaluations \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\vspace{1em}
+
+\begin{center}
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{p{2.5cm} p{10.5cm}}
+\toprule
+\textbf{Input} & A $16 \times 16$ antenna array at $29.5\;\text{GHz}$ with specified
+element spacing, beam steering direction, SLL mask, cluster size constraints,
+and evaluation budget. \\
+\midrule
+\textbf{What we optimize} & The selection of non-overlapping connected clusters from
+a pre-generated library of all possible free-form clusters, such that the
+resulting far-field radiation pattern minimizes SLL mask violations ($C_m$). \\
+\midrule
+\textbf{How} & Two metaheuristic approaches (MC 3-phase and GA) operating on the same
+binary selection encoding, with the same cluster library, physics engine,
+and evaluation budget for fair comparison. \\
+\midrule
+\textbf{Output} & Best cluster partition for each algorithm; far-field radiation patterns;
+performance metrics ($C_m$, SLL, HPBW, clustering factor); convergence curves;
+cluster layout visualizations; JSON checkpoints for cross-notebook comparison. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\end{document}

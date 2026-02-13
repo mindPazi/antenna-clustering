@@ -117,7 +117,7 @@ def plot_lobe_analysis(FF_I_dB, antenna_array, G_boresight=None,
     ax1.set_title(f'Elevation Cut (azi={azi0}°)\nHPBW={metrics["hpbw_ele"]:.1f}°')
     ax1.legend(loc='upper right', fontsize=8)
     ax1.grid(True, alpha=0.3)
-    ax1.set_ylim([-25, 25])
+    ax1.set_ylim([-25, 30])
 
     # 2. Azimuth Cut with Lobes
     ax2 = fig.add_subplot(gs[0, 1])
@@ -130,11 +130,11 @@ def plot_lobe_analysis(FF_I_dB, antenna_array, G_boresight=None,
     ax2.set_title(f'Azimuth Cut (ele={ele0}°)\nHPBW={metrics["hpbw_azi"]:.1f}°')
     ax2.legend(loc='upper right', fontsize=8)
     ax2.grid(True, alpha=0.3)
-    ax2.set_ylim([-25, 25])
+    ax2.set_ylim([-25, 30])
 
     # 3. 2D Pattern (contour)
     ax3 = fig.add_subplot(gs[0, 2])
-    levels = np.arange(-40, 5, 3)
+    levels = np.arange(-40, 35, 3)
     contour = ax3.contourf(antenna_array.AZI, antenna_array.ELE, FF_I_dB,
                            levels=levels, cmap='jet', extend='both')
     plt.colorbar(contour, ax=ax3, label='dB')
@@ -198,13 +198,15 @@ def plot_lobe_analysis(FF_I_dB, antenna_array, G_boresight=None,
 # ============================================================
 
 def rows_to_clusters(selected_rows, optimizer):
-    """Convert selected_rows (MC) to Cluster list."""
-    return [optimizer._all_clusters_flat[i] for i in np.where(selected_rows == 1)[0]]
+    """Convert selected_rows (MC) to Cluster list, filling uncovered elements."""
+    clusters = [optimizer._all_clusters_flat[i] for i in np.where(selected_rows == 1)[0]]
+    return optimizer._fill_uncovered(clusters, set().union(*(optimizer._cluster_elements[i] for i in np.where(selected_rows == 1)[0])) if np.any(selected_rows == 1) else set())
 
 
 def genes_to_clusters(genes, ga_opt):
-    """Convert genes (GA) to Cluster list."""
-    return [ga_opt.all_subarrays[i] for i in np.where(genes == 1)[0]]
+    """Convert genes (GA) to Cluster list, filling uncovered elements."""
+    clusters = [ga_opt.all_subarrays[i] for i in np.where(genes == 1)[0]]
+    return ga_opt._fill_uncovered(clusters, genes)
 
 
 def get_ff_from_mc(solution, antenna_array, mc_optimizer):
