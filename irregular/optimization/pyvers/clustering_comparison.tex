@@ -121,7 +121,9 @@ convergence curves; cluster layout visualization. \\
 A markdown header declaring the notebook title:
 \emph{``Antenna Clustering Optimization -- Comparison.
 This notebook compares the original Monte Carlo algorithm with the optimized
-Genetic Algorithm approach.''}
+version.''} It lists four key optimizations: greedy initialization, local search
+refinement, adaptive sampling with learned probabilities, and NumPy vectorized
+kernel computation.
 
 % ------------------------------------------------------------
 \subsection{Cell 1 --- Section Header (Markdown)}
@@ -227,8 +229,10 @@ optionally \texttt{ElementPatternConfig}. Calls five initialization methods:
 
     \item \textbf{\texttt{\_generate\_polar\_coordinates}}: generates angular grids
           $(\text{ele}, \text{azi})$ and spectral grids $(w, v)$.
-          The spectral grid has $N_w = \lfloor 2 \cdot 4 D_z / \lambda \rfloor$ and
-          $N_v = \lfloor 2 \cdot 4 D_y / \lambda \rfloor$ points.
+          The spectral grid has $N_w = \lfloor 2 \cdot 4 D_{z,\text{tot}} / \lambda \rfloor$ and
+          $N_v = \lfloor 2 \cdot 4 D_{y,\text{tot}} / \lambda \rfloor$ points,
+          where $D_{z,\text{tot}} = D_z + d_z$ and $D_{y,\text{tot}} = D_y + d_y$
+          include one extra element spacing beyond the aperture.
           Computes the inverse mapping from spectral to angular domain:
           $\text{ELE}_i = 90 - \arccos(W/\beta)$, $\text{AZI}_i = \arcsin(V / (\beta \sin(90 - \text{ELE}_i)))$.
 
@@ -633,7 +637,7 @@ Each test case follows the \textbf{same pipeline}:
 \end{enumerate}
 
 % ------------------------------------------------------------
-\subsection{Case 0: $\theta=0^\circ$, $\phi=0^\circ$, CF$=2$, sizes $\{1,2,4\}$, SLL $< -20\;\text{dB}$}
+\subsection{Case 0: $\theta=0^\circ$, $\phi=0^\circ$, CF$=2$, sizes $\{1,2,4\}$, SLL $< -20/-15\;\text{dB}$}
 % ------------------------------------------------------------
 
 \begin{center}
@@ -643,7 +647,7 @@ Each test case follows the \textbf{same pipeline}:
 \midrule
 Beam steering & boresight $\theta_0 = 0^\circ$, $\phi_0 = 0^\circ$ \\
 Cluster sizes & $\{1, 2, 4\}$ (max=4, allowed\_sizes=[1,2,4]) \\
-SLL requirement & $< -20\;\text{dB}$ (SLL\_level=20, SLLin=20) \\
+SLL requirement & $< -20\;\text{dB}$ out-of-FoV, $< -15\;\text{dB}$ in-FoV (SLL\_level=20, SLLin=15) \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -694,7 +698,7 @@ Extreme azimuth steering ($60^\circ$)---near the edge of the field of view.
 Hardest steering case due to grating lobe risk with $d_x = 0.5\lambda$.
 
 % ------------------------------------------------------------
-\subsection{Case 3: $\theta=10^\circ$, $\phi=45^\circ$, CF$=4$, sizes $\{1,2,4\}$, SLL $< -20\;\text{dB}$}
+\subsection{Case 3: $\theta=10^\circ$, $\phi=45^\circ$, CF$=2$, sizes $\{1,2,4\}$, SLL $< -20\;\text{dB}$}
 % ------------------------------------------------------------
 
 \begin{center}
@@ -705,12 +709,13 @@ Hardest steering case due to grating lobe risk with $d_x = 0.5\lambda$.
 Beam steering & $\theta_0 = 10^\circ$, $\phi_0 = 45^\circ$ \\
 Cluster sizes & $\{1, 2, 4\}$ \\
 SLL requirement & $< -20\;\text{dB}$ \\
+CF target & $2$ (default, targeting $\sim$128 clusters) \\
 \bottomrule
 \end{tabular}
 \end{center}
 
 \textbf{What happens.}
-Diagonal steering with higher compression (CF$=4$, targeting $\sim$64 clusters).
+Diagonal steering with moderate compression (CF$=2$, targeting $\sim$128 clusters).
 Combines the challenges of Cases~1 and~2.
 
 % ------------------------------------------------------------
