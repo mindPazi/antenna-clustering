@@ -25,7 +25,7 @@ class URAClusteringGNN(nn.Module):
     """
     def __init__(self, in_dim=2, hidden_dim=64,
                  num_clusters=4, heads=4, dropout=0.0,
-                 edge_dim=3):
+                 edge_dim=4):
         super().__init__()
 
         self.num_clusters = num_clusters
