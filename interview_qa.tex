@@ -1,0 +1,301 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb}
+\usepackage{geometry}
+\geometry{margin=2.5cm}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{xcolor}
+
+% Custom Q&A environments
+\newcounter{qacounter}
+\newenvironment{question}{%
+  \refstepcounter{qacounter}%
+  \par\medskip\noindent\textbf{\color{blue!70!black}Q\theqacounter.}\ \itshape
+}{\par}
+
+\newenvironment{answer}{%
+  \par\smallskip\noindent\textbf{\color{green!40!black}A.}\ \upshape
+}{\par\medskip\hrule\medskip}
+
+\title{Interview Q\&A Cheat Sheet\\[6pt]
+\large GNN for Clustering, Clustering Comparison \& Gumbel-Softmax}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+% ============================================================
+\section{Graph Neural Networks --- Fundamentals}
+% ============================================================
+
+\begin{question}
+What is a Graph Neural Network (GNN)?
+\end{question}
+\begin{answer}
+A neural network that operates on graph-structured data. Each node aggregates information from its neighbors through message-passing rounds, producing node-level (or graph-level) embeddings that capture both feature and topological information.
+\end{answer}
+
+\begin{question}
+What is the message-passing paradigm?
+\end{question}
+\begin{answer}
+At each layer, every node: (1)~collects messages from its neighbors, (2)~aggregates them (sum, mean, max, or attention-weighted), and (3)~updates its own representation. After $L$ layers, each node's embedding encodes its $L$-hop neighborhood.
+\end{answer}
+
+\begin{question}
+What are the main GNN variants and how do they differ?
+\end{question}
+\begin{answer}
+\textbf{GCN} (Kipf \& Welling, 2017): symmetric normalized aggregation $H^{(l+1)} = \sigma(\tilde{D}^{-1/2}\tilde{A}\tilde{D}^{-1/2}H^{(l)}W^{(l)})$. All neighbors weighted equally (by degree).\\
+\textbf{GraphSAGE}: samples a fixed number of neighbors; supports mean/LSTM/pool aggregators. Scales to large graphs.\\
+\textbf{GAT} (Graph Attention Network): learns attention coefficients $\alpha_{ij}$ per edge, so the model can weight neighbors differently. Multi-head attention improves expressiveness.\\
+\textbf{GIN} (Graph Isomorphism Network): provably as powerful as the WL test; uses sum aggregation with a learnable $\epsilon$.
+\end{answer}
+
+\begin{question}
+What is a Graph Attention Network (GAT) and why use it?
+\end{question}
+\begin{answer}
+GAT computes attention scores $\alpha_{ij} = \text{softmax}_j(\text{LeakyReLU}(\mathbf{a}^\top [W\mathbf{h}_i \| W\mathbf{h}_j]))$ to weight neighbor contributions. Benefits: (1)~learns which neighbors matter most, (2)~no need for costly eigendecompositions (unlike spectral methods), (3)~multi-head attention stabilizes training. In our antenna project, GAT lets the model learn that physically close, strongly coupled elements should influence each other more.
+\end{answer}
+
+\begin{question}
+What is over-smoothing in GNNs and how do you mitigate it?
+\end{question}
+\begin{answer}
+As GNN depth increases, all node embeddings converge to the same value because repeated neighborhood aggregation acts like a low-pass filter. Mitigations: (1)~use few layers (2--4), (2)~add residual/skip connections, (3)~use batch normalization, (4)~dropout, (5)~jumping knowledge (concatenate embeddings from all layers).
+\end{answer}
+
+\begin{question}
+What is the difference between spectral and spatial GNNs?
+\end{question}
+\begin{answer}
+\textbf{Spectral}: operate in the graph Fourier domain via eigendecomposition of the Laplacian (e.g., ChebNet). Tied to a specific graph structure.\\
+\textbf{Spatial}: directly aggregate neighbor features (e.g., GCN, GAT, GraphSAGE). Inductive---can generalize to unseen graphs.
+\end{answer}
+
+\begin{question}
+How do you handle edge features in a GNN?
+\end{question}
+\begin{answer}
+Options: (1)~concatenate edge features to node features before aggregation, (2)~use edge features inside attention (GAT with \texttt{edge\_dim}---our approach: edge features include distance, $\Delta x$, $\Delta y$ between elements), (3)~use a separate edge MLP (MPNN framework), (4)~Edge-Conditioned Convolution (ECC).
+\end{answer}
+
+\begin{question}
+What is the Weisfeiler-Leman (WL) test and why does it matter for GNNs?
+\end{question}
+\begin{answer}
+The 1-WL test is a graph isomorphism heuristic that iteratively hashes each node's label with its neighbors' labels. Standard message-passing GNNs are \emph{at most} as powerful as 1-WL in distinguishing non-isomorphic graphs. GIN matches this upper bound. Higher-order GNNs ($k$-WL) can distinguish more graphs but are more expensive.
+\end{answer}
+
+% ============================================================
+\section{GNN for Antenna Clustering --- Our Project}
+% ============================================================
+
+\begin{question}
+How did you frame antenna clustering as a GNN problem?
+\end{question}
+\begin{answer}
+Each antenna element is a node with its $(y,z)$ position as features. Edges connect nearby elements (based on physical adjacency), with edge features encoding distance and relative position. The GNN outputs a soft assignment matrix $Z \in \mathbb{R}^{N \times K}$ where $z_{ik}$ is the probability that element $i$ belongs to cluster $k$. Training is \emph{unsupervised}---no ground-truth labels.
+\end{answer}
+
+\begin{question}
+What is the architecture of your GNN model?
+\end{question}
+\begin{answer}
+Input projection (Linear $\to$ BatchNorm $\to$ ELU) $\to$ 3 GAT layers with edge features (each followed by BatchNorm + ELU) $\to$ Linear classifier $\to$ Gumbel-Softmax (training) or Softmax (inference). The GAT layers use multi-head attention (4 heads for layers 1--2, 1 head for layer 3). Hidden dimension = 64.
+\end{answer}
+
+\begin{question}
+What loss functions did you use, and why?
+\end{question}
+\begin{answer}
+\textbf{(1)~MinCut loss}: $-\text{tr}(Z^\top W Z) / \text{tr}(Z^\top D Z)$, groups mutually coupled elements together (physics-informed).
+\textbf{(2)~Clustering factor loss}: penalizes deviation from the target number of active clusters.
+\textbf{(3)~Balance loss}: penalizes variance in cluster sizes.
+\textbf{(4)~Entropy loss}: encourages confident (low-entropy) assignments.
+\textbf{(5)~Contiguity loss}: minimizes average distance from each element to its cluster centroid (spatial compactness).
+\textbf{(6)~Allowed sizes loss}: penalizes cluster sizes not in $\{1,2,4\}$.
+All combined with tunable $\lambda$ weights.
+\end{answer}
+
+\begin{question}
+Why is the MinCut loss physics-informed?
+\end{question}
+\begin{answer}
+The weight matrix $W$ encodes mutual coupling between antenna elements. Minimizing the MinCut objective groups strongly coupled elements into the same cluster, which preserves radiation performance. This is the key link between graph partitioning theory and antenna physics.
+\end{answer}
+
+% ============================================================
+\section{Gumbel-Softmax}
+% ============================================================
+
+\begin{question}
+What is the Gumbel-Softmax trick and why is it needed?
+\end{question}
+\begin{answer}
+Categorical sampling ($\arg\max$) is non-differentiable, so gradients cannot flow through discrete decisions. The Gumbel-Softmax trick provides a differentiable approximation: given logits $\pi_1, \dots, \pi_K$, sample $g_i \sim \text{Gumbel}(0,1)$ and compute:
+\[
+y_i = \frac{\exp((\log\pi_i + g_i)/\tau)}{\sum_j \exp((\log\pi_j + g_j)/\tau)}
+\]
+where $\tau$ is a temperature parameter. This produces a differentiable sample from an approximate categorical distribution.
+\end{answer}
+
+\begin{question}
+What role does the temperature $\tau$ play?
+\end{question}
+\begin{answer}
+$\tau \to 0$: output approaches a one-hot vector (hard categorical), but gradients vanish.\\
+$\tau \to \infty$: output approaches uniform distribution, high variance.\\
+In practice, start with $\tau \approx 1$ and anneal toward $0.1$--$0.5$ during training. This balances exploration (early) with confident assignments (late).
+\end{answer}
+
+\begin{question}
+What is the ``straight-through'' variant of Gumbel-Softmax?
+\end{question}
+\begin{answer}
+\texttt{hard=True}: forward pass uses $\arg\max$ (one-hot), backward pass uses the soft Gumbel-Softmax gradients. This gives discrete samples while still allowing gradient flow. In our model we use \texttt{hard=False} during training for smoother optimization, and standard softmax at evaluation time.
+\end{answer}
+
+\begin{question}
+Where does the Gumbel distribution come from?
+\end{question}
+\begin{answer}
+The Gumbel-Max theorem: if $g_i \sim \text{Gumbel}(0,1)$ i.i.d., then $\arg\max_i (\log\pi_i + g_i)$ gives an exact sample from $\text{Categorical}(\pi)$. The Gumbel-Softmax relaxes $\arg\max$ to $\text{softmax}$ with temperature, making it differentiable.
+\end{answer}
+
+% ============================================================
+\section{Clustering Comparison --- MC vs GA}
+% ============================================================
+
+\begin{question}
+What problem are the MC and GA solving?
+\end{question}
+\begin{answer}
+Partition 256 antenna elements ($16 \times 16$ URA at 29.5\,GHz) into spatially contiguous clusters to minimize SLL mask violations ($C_m$) in the far-field pattern, subject to cluster size constraints. This reduces hardware cost (fewer RF chains) while preserving radiation performance.
+\end{answer}
+
+\begin{question}
+How is the search space encoded?
+\end{question}
+\begin{answer}
+Both algorithms use the same binary selection vector of length $|\mathcal{S}| \approx 6000$ (all possible connected clusters up to a given size). Gene $i=1$ means cluster $i$ is selected. Overlap removal + fill-uncovered ensures a valid non-overlapping partition covering all 256 elements.
+\end{answer}
+
+\begin{question}
+How does the Monte Carlo 3-phase strategy work?
+\end{question}
+\begin{answer}
+\textbf{Phase 1} (iter 1--10): greedy initialization---shuffle all clusters, greedily pick non-overlapping ones.\\
+\textbf{Phase 2} (iter 11--50): random sampling---each cluster selected with 50\% probability, then overlaps removed.\\
+\textbf{Phase 3} (iter 51+): adaptive sampling---selection probability proportional to accumulated reward scores. Also, local search (bit-flip refinement) every 25 iterations.
+\end{answer}
+
+\begin{question}
+How does the Genetic Algorithm work?
+\end{question}
+\begin{answer}
+\textbf{Encoding}: same binary vector as MC.\\
+\textbf{Operators}: tournament selection (size 3), uniform crossover ($p_c=0.8$), bit-flip mutation ($p_m=0.15$), elitism (top 3 preserved).\\
+\textbf{Fitness}: $f = -C_m - |CF - CF_{\text{target}}| \times 50$ (penalizes both high cost and wrong clustering factor).\\
+\textbf{Overlap removal} applied after each genetic operation.
+\end{answer}
+
+\begin{question}
+How do you ensure a fair comparison between MC and GA?
+\end{question}
+\begin{answer}
+Both use: (1)~the same evaluation budget (500 physics evaluations), (2)~the same cluster library, (3)~the same physics engine and cost function, (4)~the same random seed. The GA budget is matched by choosing pop$=25$, gen$=21$, elite$=3$ giving $25 + 21 \times 22 = 487 \approx 500$ evaluations.
+\end{answer}
+
+\begin{question}
+What is the cost function $C_m$?
+\end{question}
+\begin{answer}
+$C_m = \text{mean}(\text{top-}k \text{ violations})$ where violations are points where the far-field pattern exceeds the SLL mask, and $k = \min(10, |\text{violations}|)$. $C_m = 0$ means no mask violations. It measures the average severity of the worst side-lobe exceedances.
+\end{answer}
+
+\begin{question}
+What is the clustering factor and why does it matter?
+\end{question}
+\begin{answer}
+$CF = N / K$ where $N = 256$ is the total elements and $K$ is the number of clusters. Higher CF means more compression (fewer RF chains, lower cost). E.g., $CF = 2$ means 128 clusters, $CF = 4$ means 64. The trade-off: higher CF degrades radiation performance (higher $C_m$).
+\end{answer}
+
+% ============================================================
+\section{GNN vs Metaheuristics --- Comparison}
+% ============================================================
+
+\begin{question}
+What are the advantages of the GNN approach over MC/GA?
+\end{question}
+\begin{answer}
+\textbf{(1)~Speed}: once trained, GNN inference is a single forward pass ($\sim$ms) vs. 500 physics evaluations ($\sim$minutes).\\
+\textbf{(2)~Generalization}: the GNN can potentially generalize to different array sizes or steering directions without retraining from scratch.\\
+\textbf{(3)~Differentiable}: end-to-end gradient-based optimization of clustering assignments.\\
+\textbf{(4)~Physics-informed}: the MinCut loss directly encodes mutual coupling.
+\end{answer}
+
+\begin{question}
+What are the challenges of the GNN approach?
+\end{question}
+\begin{answer}
+\textbf{(1)~No hard constraints}: soft assignments may not satisfy contiguity or allowed-size constraints exactly---requires post-processing.\\
+\textbf{(2)~Loss design}: balancing 6 loss terms with $\lambda$ weights requires careful tuning.\\
+\textbf{(3)~Training instability}: Gumbel-Softmax with low $\tau$ can cause gradient issues; mode collapse is a risk.\\
+\textbf{(4)~No direct far-field evaluation}: the GNN optimizes a proxy (MinCut + penalties), not the actual $C_m$.
+\end{answer}
+
+\begin{question}
+When would you prefer MC/GA over GNN?
+\end{question}
+\begin{answer}
+When: (1)~you need guaranteed constraint satisfaction (contiguity, exact sizes), (2)~the problem is one-off (no amortization benefit), (3)~the search space is small enough for metaheuristics to explore well, (4)~you need to directly optimize the true physics objective $C_m$ rather than a proxy.
+\end{answer}
+
+% ============================================================
+\section{Quick-Fire Concepts}
+% ============================================================
+
+\begin{question}
+What is the difference between node classification, link prediction, and graph classification?
+\end{question}
+\begin{answer}
+\textbf{Node classification}: predict a label per node (e.g., cluster assignment).\\
+\textbf{Link prediction}: predict whether an edge exists between two nodes.\\
+\textbf{Graph classification}: predict a label for the entire graph (requires a readout/pooling step).
+\end{answer}
+
+\begin{question}
+What is graph pooling?
+\end{question}
+\begin{answer}
+Reduces the graph to a single vector for graph-level tasks. Common methods: global mean/sum/max pooling, hierarchical pooling (DiffPool, MinCutPool), or attention-based pooling (Set2Set, SAGPool).
+\end{answer}
+
+\begin{question}
+What is the difference between inductive and transductive learning on graphs?
+\end{question}
+\begin{answer}
+\textbf{Transductive}: the test nodes are present (unlabeled) in the graph during training (e.g., GCN on a citation network).\\
+\textbf{Inductive}: the model must generalize to entirely new, unseen graphs at test time (e.g., GraphSAGE, GAT).
+\end{answer}
+
+\begin{question}
+What are common activation functions used in GNNs?
+\end{question}
+\begin{answer}
+ReLU (most common), ELU (our choice---avoids dead neurons, smoother for negative inputs), LeakyReLU (used inside GAT attention), GELU (popular in transformers, sometimes used in graph transformers).
+\end{answer}
+
+\begin{question}
+How does BatchNorm help in GNN training?
+\end{question}
+\begin{answer}
+Normalizes node features to zero mean and unit variance within each batch. Benefits: (1)~stabilizes training with deep GNNs, (2)~reduces internal covariate shift, (3)~allows higher learning rates. Alternative: LayerNorm or GraphNorm (normalizes per graph).
+\end{answer}
+
+\end{document}
